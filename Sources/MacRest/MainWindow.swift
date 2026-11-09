@@ -38,6 +38,11 @@ struct MainWindow: View {
     }
 
     @ViewBuilder private var banners: some View {
+        if case let .external(label) = EngineService.shared.state {
+            TakeOverBanner(label: label) {
+                Task { await EngineService.shared.takeOver(); await model.reload() }
+            }
+        }
         if let error = model.actionError ?? model.loadError {
             Banner(text: error, severity: .error, dismiss: model.actionError != nil ? { model.dismissError() } : nil)
         }
@@ -47,7 +52,9 @@ struct MainWindow: View {
     }
 
     @ViewBuilder private var detail: some View {
-        if !model.loadedOnce {
+        if !EngineService.shared.isRunning || (model.loadedOnce && model.needsSetup) {
+            EngineGate(engine: EngineService.shared, model: model)
+        } else if !model.loadedOnce {
             ProgressView().controlSize(.small)
         } else {
             switch model.pane ?? .activity {
@@ -90,8 +97,11 @@ struct MainWindow: View {
             Menu {
                 Button("Refresh") { Task { await model.reload() } }
                 Divider()
+                Button("Restart Backrest") { Task { await EngineService.shared.restart(); await model.reload() } }
                 Button("Open Backrest in the Browser") { NSWorkspace.shared.open(URL(string: Links.backrestURL)!) }
                 Divider()
+                Toggle("Open at Login", isOn: Binding(get: { AppDelegate.opensAtLogin },
+                                                      set: { AppDelegate.opensAtLogin = $0 }))
                 Toggle("Show in Menu Bar", isOn: Binding(get: { AppDelegate.showsMenuBarItem },
                                                          set: { AppDelegate.showsMenuBarItem = $0 }))
             } label: {

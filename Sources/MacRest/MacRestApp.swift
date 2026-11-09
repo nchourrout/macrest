@@ -1,5 +1,6 @@
 import AppKit
 import MacRestCore
+import ServiceManagement
 import SwiftUI
 
 @main
@@ -56,7 +57,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             AppModel.shared.pane = pane
         }
         Self.updateActivationPolicy()
+        Self.registerLoginItemOnce()
         AppModel.shared.start()
+        // `--take-over` moves a Homebrew Backrest under MacRest without a
+        // click, for a scripted migration (mac-config).
+        let takeOver = args.contains("--take-over")
+        Task { @MainActor in
+            let engine = EngineService.shared
+            await engine.ensure()
+            if takeOver, case .external = engine.state { await engine.takeOver() }
+            await AppModel.shared.reload()
+        }
+    }
+
+    /// MacRest opens at login, registered once on first launch so installing
+    /// the app is the whole setup; turning it off in the `…` menu (or System
+    /// Settings) sticks, since this never registers again.
+    @MainActor static func registerLoginItemOnce() {
+        let key = "loginItemRegistered"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        try? SMAppService.mainApp.register()
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    @MainActor static var opensAtLogin: Bool {
+        get { SMAppService.mainApp.status == .enabled }
+        set { newValue ? try? SMAppService.mainApp.register() : try? SMAppService.mainApp.unregister() }
     }
 
     /// A Dock icon while the window is open, or always when there is no menu
@@ -110,8 +136,11 @@ struct MenuPanel: View {
                     Spacer(minLength: 0)
                 }
                 DaysChart(overview: o)
+            } else if model.needsSetup {
+                Label("Backups are not set up yet.", systemImage: "externaldrive.badge.plus")
+                Button("Set Up Backups…") { open(.activity) }.controlSize(.large)
             } else {
-                Label(model.loadError ?? "Reading Backrest…", systemImage: "questionmark.circle")
+                Label(engineText ?? model.loadError ?? "Reading Backrest…", systemImage: "questionmark.circle")
                     .foregroundStyle(.secondary)
             }
 
@@ -164,6 +193,14 @@ struct MenuPanel: View {
         }
         .padding(14)
         .frame(width: 330)
+    }
+
+    private var engineText: String? {
+        switch EngineService.shared.state {
+        case let .installing(step): step
+        case let .failed(message): message
+        default: nil
+        }
     }
 
     private func open(_ pane: Pane?) {

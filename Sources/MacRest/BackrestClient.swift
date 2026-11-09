@@ -93,3 +93,27 @@ extension BackrestClient {
         _ = try await call("Restore", body)
     }
 }
+
+extension BackrestClient {
+    struct RepoProbe {
+        var exists: Bool
+        var error: String?
+        var hostKeyUntrusted: Bool
+    }
+
+    /// Whether a repository already exists at the repo's URI, without adding
+    /// it: picks "connect" or "create" before anything is written.
+    static func checkRepoExists(_ repo: JSONValue) async throws -> RepoProbe {
+        let data = try await call("CheckRepoExists", JSONValue.object(["repo": repo]), timeout: 60)
+        let v = try JSONDecoder().decode(JSONValue.self, from: data)
+        return RepoProbe(exists: v["exists"]?.bool ?? false,
+                         error: v["error"]?.string.flatMap { $0.isEmpty ? nil : $0 },
+                         hostKeyUntrusted: v["hostKeyUntrusted"]?.bool ?? false)
+    }
+
+    /// Adds the repository, creating it when the URI holds none (restic
+    /// init) or checking the password against the one that is there.
+    static func addRepo(_ repo: JSONValue) async throws -> JSONValue {
+        try JSONDecoder().decode(JSONValue.self, from: try await call("AddRepo", JSONValue.object(["repo": repo]), timeout: 120))
+    }
+}

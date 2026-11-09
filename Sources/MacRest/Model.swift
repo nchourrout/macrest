@@ -65,6 +65,8 @@ final class AppModel {
     @ObservationIgnored private var sleeper: Task<Void, Never>?
 
     var isDirty: Bool { plan != savedPlan || repo != savedRepo }
+    /// Backrest answers but has no repository or plan yet: the setup shows.
+    var needsSetup: Bool { config.map(SetupDefaults.needsSetup) ?? false }
     var problems: [String] { (plan?.problems ?? []) + (repo?.problems ?? []) }
     var runningBackup: ActivityFlow? { flows.first { $0.isActive && $0.primary.kind == .backup } }
     var runningAnything: Bool { flows.contains { $0.isActive } }
@@ -126,7 +128,10 @@ final class AppModel {
     private func adopt(_ config: JSONValue, keepingEdits: Bool) {
         self.config = config
         guard let (p, r) = BackrestConfig.read(config) else {
-            loadError = "Backrest has no backup plan configured."
+            savedPlan = nil
+            savedRepo = nil
+            plan = nil
+            repo = nil
             return
         }
         savedPlan = p
@@ -157,6 +162,43 @@ final class AppModel {
             actionError = "Not saved: \(error.localizedDescription)"
             if let fresh = try? await BackrestClient.getConfig() { adopt(fresh, keepingEdits: true) }
         }
+    }
+
+    // MARK: Setup
+
+    struct SetupRequest {
+        var uri: String
+        var password: String
+        var env: [String] = []
+        var instance: String
+        var paths: [String]
+        var everyHours: Int
+        var autoUnlock: Bool
+    }
+
+    /// Creates or connects the repository, adds the plan, and starts the
+    /// first backup. Each step re-reads the config, since Backrest bumps its
+    /// modno on every write.
+    func setUp(_ r: SetupRequest) async throws {
+        var config = try await BackrestClient.getConfig()
+        if (config["instance"]?.string ?? "").isEmpty {
+            config["instance"] = .string(r.instance)
+            config = try await BackrestClient.setConfig(config)
+        }
+        let repoID = "main", planID = "home"
+        config = try await BackrestClient.addRepo(SetupDefaults.repo(id: repoID, uri: r.uri, password: r.password,
+                                                                    env: r.env, autoUnlock: r.autoUnlock))
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var plans = config["plans"]?.array ?? []
+        plans.removeAll { $0["id"]?.string == planID }
+        plans.append(SetupDefaults.plan(id: planID, repo: repoID, paths: r.paths,
+                                        excludes: SetupDefaults.excludes(home: home), everyHours: r.everyHours))
+        config["plans"] = .array(plans)
+        _ = try await BackrestClient.setConfig(config)
+        Keychain.save(password: r.password, account: r.uri)
+        await reload()
+        pane = .activity
+        await backupNow()
     }
 
     // MARK: Actions
