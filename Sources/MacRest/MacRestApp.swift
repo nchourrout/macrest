@@ -186,13 +186,17 @@ struct MenuPanel: View {
             }
             .controlSize(.large)
 
-            Divider()
-            HStack {
-                Button("Open MacRest") { open(nil) }.buttonStyle(.plain).foregroundStyle(.tint)
-                Spacer()
-                Button("Quit") { NSApp.terminate(nil) }.buttonStyle(.plain).foregroundStyle(.secondary)
+            Divider().padding(.horizontal, 4)
+            // Menu rows, as in the system's own menu bar panels: full width,
+            // highlighted on hover, with the shortcut on the right.
+            VStack(spacing: 0) {
+                MenuRow(title: "Open MacRest", shortcut: "⌘O") { open(nil) }
+                    .keyboardShortcut("o")
+                MenuRow(title: "Quit MacRest", shortcut: "⌘Q") { NSApp.terminate(nil) }
+                    .keyboardShortcut("q")
             }
-            .font(.callout)
+            .padding(.horizontal, -8)
+            .padding(.top, -6)
         }
         .padding(14)
         .frame(width: 330)
@@ -210,5 +214,33 @@ struct MenuPanel: View {
         if let pane { model.pane = pane }
         NSApp.activate()
         openWindow(id: MainWindow.id)
+    }
+}
+
+/// A plain menu item inside the panel: the title on the left, its shortcut
+/// dimmed on the right, and the system's hover highlight.
+private struct MenuRow: View {
+    let title: String
+    let shortcut: String
+    let action: () -> Void
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(shortcut).foregroundStyle(.secondary)
+            }
+            .font(.system(size: 13))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity)
+            .background(hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
+                        in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
