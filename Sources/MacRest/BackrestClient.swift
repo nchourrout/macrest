@@ -125,3 +125,23 @@ extension BackrestClient {
         try JSONDecoder().decode(JSONValue.self, from: try await call("AddRepo", JSONValue.object(["repo": repo]), timeout: 120))
     }
 }
+
+extension BackrestClient {
+    struct SSHKey {
+        var publicKey: String
+        var keyPath: String
+        var knownHostsPath: String
+        /// The host key could not be scanned (host unreachable from here).
+        var warning: String?
+    }
+
+    /// Backrest generates a key pair for this host beside its config and
+    /// scans the server's host key into its own known_hosts.
+    static func setupSftp(host: String, port: String, user: String) async throws -> SSHKey {
+        let body = JSONValue.object(["host": .string(host), "port": .string(port), "username": .string(user)])
+        let v = try JSONDecoder().decode(JSONValue.self, from: try await call("SetupSftp", body, timeout: 60))
+        return SSHKey(publicKey: v["publicKey"]?.string ?? "", keyPath: v["keyPath"]?.string ?? "",
+                      knownHostsPath: v["knownHostsPath"]?.string ?? "",
+                      warning: v["error"]?.string.flatMap { $0.isEmpty ? nil : $0 })
+    }
+}

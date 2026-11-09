@@ -65,7 +65,7 @@ public struct TimeBuckets: Sendable, Equatable, Hashable {
     /// the buckets, since each one keeps its own snapshots independently.
     public var horizon: String {
         if yearly > 0 { return Format.plural(yearly, "year") }
-        if monthly > 0 { return Format.plural(monthly, "month") }
+        if monthly > 0 { return monthly % 12 == 0 ? Format.plural(monthly / 12, "year") : Format.plural(monthly, "month") }
         if weekly > 0 { return Format.plural(weekly, "week") }
         if daily > 0 { return Format.plural(daily, "day") }
         if hourly > 0 { return Format.plural(hourly, "hour") }
@@ -156,6 +156,9 @@ public struct RepoSettings: Sendable, Equatable {
     /// Backrest removes a stale lock before a run that needs one. Safe while
     /// this Mac is the repository's only client.
     public var autoUnlock = false
+    /// Credentials, restic environment variables ("KEY=value"), edited in
+    /// the Storage pane to rotate a key without setting the storage up again.
+    public var env: [String] = []
 
     public var problems: [String] {
         var p: [String] = []
@@ -185,7 +188,8 @@ public enum BackrestConfig {
             checkSchedule: ScheduleSetting(check?["schedule"]), checkMode: mode,
             pruneSchedule: ScheduleSetting(repo["prunePolicy"]?["schedule"]),
             pruneMaxUnusedPercent: repo["prunePolicy"]?["maxUnusedPercent"]?.number ?? 0,
-            autoUnlock: repo["autoUnlock"]?.bool ?? false)
+            autoUnlock: repo["autoUnlock"]?.bool ?? false,
+            env: repo["env"]?.strings ?? [])
         return (settings, repoSettings)
     }
 
@@ -223,6 +227,7 @@ public enum BackrestConfig {
             prune["maxUnusedPercent"] = .number(repo.pruneMaxUnusedPercent)
             r["prunePolicy"] = prune
             r["autoUnlock"] = repo.autoUnlock ? .bool(true) : nil
+            r["env"] = repo.env.isEmpty && r["env"] == nil ? nil : .array(repo.env.map(JSONValue.string))
             repos[i] = r
             config["repos"] = .array(repos)
         }

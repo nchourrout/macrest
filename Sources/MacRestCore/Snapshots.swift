@@ -104,7 +104,7 @@ public enum Snapshots {
     }
 
     /// The folders from the snapshot root down to `path`, for a breadcrumb:
-    /// "/Users/nico/dev" under root "/Users/nico" gives ["/Users/nico", "/Users/nico/dev"].
+    /// "/Users/alex/dev" under root "/Users/alex" gives ["/Users/alex", "/Users/alex/dev"].
     public static func breadcrumb(_ path: String, root: String) -> [String] {
         guard path.hasPrefix(root) else { return [root] }
         var out = [root]

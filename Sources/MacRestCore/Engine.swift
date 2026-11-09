@@ -101,9 +101,8 @@ public enum EngineAgent {
 public enum SetupDefaults {
     /// Caches, VMs, build output and app state that is rebuilt or synced on
     /// its own: worth nothing in a backup and most of its size. Paths are
-    /// under `home`; `**/` patterns match at any depth. Taken from the setup
-    /// mac-config used to template, which ran for months without one of them
-    /// being missed.
+    /// under `home`; `**/` patterns match at any depth. Each was chosen on a
+    /// real machine for being large, churning, and worthless to restore.
     public static func excludes(home: String) -> [String] {
         let underHome = [
             ".Trash", ".cache", ".colima", ".docker", ".orbstack", ".lima", ".local/share/backrest",
@@ -142,31 +141,17 @@ public enum SetupDefaults {
         return String((0..<length).map { _ in alphabet.randomElement(using: &rng)! })
     }
 
-    public enum Destination: String, CaseIterable, Sendable {
-        case sftp = "SFTP server", local = "Folder or disk", rest = "REST server", other = "Other (restic URI)"
-    }
-
-    /// The restic repository URI for a destination.
-    public static func uri(_ kind: Destination, host: String = "", user: String = "", path: String = "", raw: String = "") -> String {
-        let host = host.trimmingCharacters(in: .whitespaces), user = user.trimmingCharacters(in: .whitespaces)
-        let path = path.trimmingCharacters(in: .whitespaces)
-        switch kind {
-        case .sftp: return "sftp:" + (user.isEmpty ? "" : user + "@") + host + ":" + path
-        case .local: return path
-        case .rest: return "rest:" + (raw.isEmpty ? host : raw)
-        case .other: return raw.trimmingCharacters(in: .whitespaces)
-        }
-    }
-
     /// The repo and plan a setup creates, as Backrest JSON. Retention and
     /// checks start Time Machine style; `autoUnlock` clears a lock left by a
     /// crashed run, which otherwise fails retention, prune and check on every
     /// run while backups keep succeeding (safe while this Mac is the
     /// repository's only client).
-    public static func repo(id: String, uri: String, password: String, env: [String] = [], autoUnlock: Bool) -> JSONValue {
+    public static func repo(id: String, uri: String, password: String, env: [String] = [], flags: [String] = [],
+                            autoUnlock: Bool) -> JSONValue {
         .object([
             "id": .string(id), "uri": .string(uri), "password": .string(password),
             "env": .array(env.map(JSONValue.string)),
+            "flags": .array(flags.map(JSONValue.string)),
             // No autoInitialize: AddRepo runs restic init itself and stamps the
             // repo's guid, and Backrest rejects the two together.
             "autoUnlock": .bool(autoUnlock),

@@ -236,10 +236,13 @@ struct CoverageBar: View {
                 GeometryReader { geo in
                     let total = log(last.to / Self.floor)
                     let gap = 2.0
-                    let usable = geo.size.width - gap * Double(segments.count - 1)
+                    // Each stretch keeps room for its label; the log scale
+                    // shares out what is left.
+                    let minWidth = 76.0
+                    let usable = max(geo.size.width - gap * Double(segments.count - 1) - minWidth * Double(segments.count), 0)
                     HStack(spacing: gap) {
                         ForEach(Array(segments.enumerated()), id: \.offset) { i, seg in
-                            let w = log(seg.to / max(seg.from, Self.floor)) / total * usable
+                            let w = minWidth + log(seg.to / max(seg.from, Self.floor)) / total * usable
                             VStack(alignment: .leading, spacing: 4) {
                                 RoundedRectangle(cornerRadius: 3)
                                     .fill(Color.accentColor.opacity(0.85 - Double(i) * 0.15))
@@ -903,6 +906,20 @@ struct StorageView: View {
             Form {
                 SwiftUI.Section("Storage") {
                     LabeledContent("Backed up to") { Text(repo.wrappedValue.uri).textSelection(.enabled) }
+                    // Credentials edit in place: rotating a key is changing the
+                    // value and saving, no setup again.
+                    ForEach(Array(repo.wrappedValue.env.enumerated()), id: \.offset) { i, line in
+                        let (key, value) = Credential.split(line)
+                        let binding = Binding<String>(get: { value },
+                                                      set: { repo.wrappedValue.env[i] = key + "=" + $0 })
+                        LabeledContent(Credential.label(key)) {
+                            if Credential.isSecret(key) {
+                                SecureField(Credential.label(key), text: binding).labelsHidden().frame(maxWidth: 320)
+                            } else {
+                                TextField(Credential.label(key), text: binding).labelsHidden().frame(maxWidth: 320)
+                            }
+                        }
+                    }
                     LabeledContent("Stored") {
                         HStack(spacing: 8) {
                             if let stats = model.stats?.0, let at = model.stats?.1, let size = stats.totalSize {

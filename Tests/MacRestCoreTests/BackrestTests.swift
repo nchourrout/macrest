@@ -6,10 +6,10 @@ import Testing
 /// does not model (hooks, sync, auth, guid) that a save must keep.
 let configJSON = """
 {"modno":4,"version":6,"instance":"macbook","auth":{"disabled":true},
- "repos":[{"id":"homeserver","uri":"sftp:homeserver:/home/nico/restic/macbook","guid":"0cea","password":"hunter2",
+ "repos":[{"id":"nas","uri":"sftp:nas:/backups/mac","guid":"0cea","password":"hunter2",
    "prunePolicy":{"schedule":{"maxFrequencyDays":7,"clock":"CLOCK_LAST_RUN_TIME"},"maxUnusedPercent":10},
    "checkPolicy":{"schedule":{"maxFrequencyDays":30,"clock":"CLOCK_LAST_RUN_TIME"},"structureOnly":true}}],
- "plans":[{"id":"home","repo":"homeserver","paths":["/Users/nico"],"excludes":["/Users/nico/.Trash","**/node_modules"],
+ "plans":[{"id":"home","repo":"nas","paths":["/Users/alex"],"excludes":["/Users/alex/.Trash","**/node_modules"],
    "schedule":{"maxFrequencyHours":4,"clock":"CLOCK_LAST_RUN_TIME"},
    "retention":{"policyTimeBucketed":{"daily":7,"weekly":4,"monthly":3}},
    "hooks":[{"conditions":["CONDITION_FORGET_ERROR"],"actionCommand":{"command":"osascript"}}],
@@ -38,7 +38,7 @@ func roundTrip(_ v: JSONValue) throws -> JSONValue {
     @Test func readsPlanAndRepo() throws {
         let (plan, repo) = try #require(BackrestConfig.read(try config()))
         #expect(plan.id == "home")
-        #expect(plan.paths == ["/Users/nico"])
+        #expect(plan.paths == ["/Users/alex"])
         #expect(plan.excludes.count == 2)
         #expect(plan.schedule == .everyHours(4))
         #expect(plan.retention == .buckets(TimeBuckets(daily: 7, weekly: 4, monthly: 3)))
@@ -93,6 +93,7 @@ func roundTrip(_ v: JSONValue) throws -> JSONValue {
 
     @Test func retentionSummary() {
         #expect(RetentionSetting.buckets(TimeBuckets(daily: 7, weekly: 4, monthly: 3)).summary == "Keeps about 3 months of history")
+        #expect(RetentionSetting.buckets(TimeBuckets(hourly: 24, monthly: 24)).summary == "Keeps about 2 years of history")
         #expect(RetentionSetting.lastN(1).summary == "Keeps the last 1 snapshot")
     }
 }
@@ -101,24 +102,25 @@ func roundTrip(_ v: JSONValue) throws -> JSONValue {
 /// a stale lock, a pending future check, and a running backup.
 let operationsJSON = """
 {"operations":[
- {"id":"8356","flowId":"8356","repoId":"homeserver","planId":"home","snapshotId":"360d","status":"STATUS_SUCCESS",
+ {"id":"8356","flowId":"8356","repoId":"nas","planId":"home","snapshotId":"360d","status":"STATUS_SUCCESS",
   "unixTimeStartMs":"1793700000000","unixTimeEndMs":"1793700071000","logref":"t-45ff",
   "operationBackup":{"lastStatus":{"summary":{"filesNew":"77","filesChanged":"525","dataAdded":"558739545",
    "totalBytesProcessed":"86128146380","totalDuration":71.36,"snapshotId":"360d"}}}},
- {"id":"8359","flowId":"8356","repoId":"homeserver","planId":"home","status":"STATUS_ERROR",
+ {"id":"8359","flowId":"8356","repoId":"nas","planId":"home","status":"STATUS_ERROR",
   "unixTimeStartMs":"1793700072000","unixTimeEndMs":"1793700073000",
-  "displayMessage":"forget: forget for repo homeserver: command \\"restic forget\\" failed: exit status 11\\nOutput:\\n{\\"message_type\\":\\"exit_error\\",\\"code\\":11,\\"message\\":\\"unable to create lock in backend: repository is already locked by PID 81540\\\\nlock was created at 2026-09-19\\"}\\n",
+  "displayMessage":"forget: forget for repo nas: command \\"restic forget\\" failed: exit status 11\\nOutput:\\n{\\"message_type\\":\\"exit_error\\",\\"code\\":11,\\"message\\":\\"unable to create lock in backend: repository is already locked by PID 81540\\\\nlock was created at 2026-09-19\\"}\\n",
   "operationForget":{"policy":{}}},
- {"id":"8361","flowId":"8356","repoId":"homeserver","planId":"home","status":"STATUS_SUCCESS",
+ {"id":"8361","flowId":"8356","repoId":"nas","planId":"home","status":"STATUS_SUCCESS",
   "unixTimeStartMs":"1793700071500","operationIndexSnapshot":{}},
- {"id":"8362","flowId":"8356","repoId":"homeserver","planId":"home","status":"STATUS_SUCCESS",
+ {"id":"8362","flowId":"8356","repoId":"nas","planId":"home","status":"STATUS_SUCCESS",
   "unixTimeStartMs":"1793700073000","operationRunHook":{"parentOp":"8359","condition":"CONDITION_FORGET_ERROR"}},
- {"id":"8287","flowId":"8287","repoId":"homeserver","planId":"_system_","status":"STATUS_PENDING",
+ {"id":"8287","flowId":"8287","repoId":"nas","planId":"_system_","status":"STATUS_PENDING",
   "unixTimeStartMs":"1796468137839","operationCheck":{}},
- {"id":"8400","flowId":"8400","repoId":"homeserver","planId":"home","status":"STATUS_INPROGRESS",
+ {"id":"8400","flowId":"8400","repoId":"nas","planId":"home","status":"STATUS_INPROGRESS",
   "unixTimeStartMs":"1793707000000","operationBackup":{"lastStatus":{"status":{"percentDone":0.42,
-   "totalBytes":"1000","bytesDone":"420","currentFile":["/Users/nico/a.txt"]}}}},
+   "totalBytes":"1000","bytesDone":"420","currentFile":["/Users/alex/a.txt"]}}}},
  {"id":"8401","flowId":"8401","status":"STATUS_SUCCESS","unixTimeStartMs":"1793707100000","operationSomethingNew":{}},
+ {"id":"8500","flowId":"8500","status":"STATUS_SUCCESS","unixTimeStartMs":"1793707150000","operationIndexSnapshot":{}},
  {"flowId":"9"}
 ]}
 """
@@ -127,7 +129,7 @@ let operationsJSON = """
     @Test func flows() throws {
         let ops = try Activity.decode(Data(operationsJSON.utf8))
         // The id-less entry drops itself; the unknown kind is kept.
-        #expect(ops.count == 7)
+        #expect(ops.count == 8)
         let (flows, scheduled) = Activity.flows(ops, now: now)
         #expect(scheduled.map(\.id) == [8287])
         #expect(flows.map(\.id) == [8401, 8400, 8356])
@@ -144,7 +146,7 @@ let operationsJSON = """
         let running = flows[1]
         #expect(running.isActive)
         #expect(running.primary.backup?.percentDone == 0.42)
-        #expect(running.primary.backup?.currentFile == "/Users/nico/a.txt")
+        #expect(running.primary.backup?.currentFile == "/Users/alex/a.txt")
         #expect(flows[0].primary.kind == .unknown)
     }
 
@@ -152,7 +154,7 @@ let operationsJSON = """
         #expect(Activity.reason(from: "restic failed\nFatal: unable to open repo\"}") == "unable to open repo")
         #expect(Activity.reason(from: "\n... 20 bytes truncated ...\nsomething broke") == "something broke")
         let check = """
-        check: check repo homeserver: command "restic check" failed: exit status 11
+        check: check repo nas: command "restic check" failed: exit status 11
         Output:
         using temporary cache in /var/folders/x
         create exclusive lock for repository

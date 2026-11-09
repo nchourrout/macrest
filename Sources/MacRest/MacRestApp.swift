@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.registerLoginItemOnce()
         AppModel.shared.start()
         // `--take-over` moves a Homebrew Backrest under MacRest without a
-        // click, for a scripted migration (mac-config).
+        // click, for a scripted migration.
         let takeOver = args.contains("--take-over")
         Task { @MainActor in
             let engine = EngineService.shared

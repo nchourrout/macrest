@@ -225,9 +225,12 @@ public enum Activity {
             .sorted { $0.start < $1.start }
         let past = operations.filter { !($0.outcome == .pending && $0.start > now) }
         let groups = Dictionary(grouping: past, by: \.flowID)
-        let flows = groups.map { id, ops -> ActivityFlow in
+        // A flow of bookkeeping alone (Backrest indexing a snapshot it found
+        // in the repository, a hook firing on its own) is not something that
+        // happened to the backups, so it is left out of the history.
+        let flows = groups.compactMap { id, ops -> ActivityFlow? in
             let steps = ops.sorted { $0.id < $1.id }
-            let primary = steps.first { !$0.kind.isAccessory } ?? steps[0]
+            guard let primary = steps.first(where: { !$0.kind.isAccessory }) else { return nil }
             return ActivityFlow(id: id, primary: primary, steps: steps)
         }
         return (flows.sorted { $0.start > $1.start }, scheduled)

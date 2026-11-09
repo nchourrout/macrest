@@ -170,6 +170,7 @@ final class AppModel {
         var uri: String
         var password: String
         var env: [String] = []
+        var flags: [String] = []
         var instance: String
         var paths: [String]
         var everyHours: Int
@@ -179,15 +180,24 @@ final class AppModel {
     /// Creates or connects the repository, adds the plan, and starts the
     /// first backup. Each step re-reads the config, since Backrest bumps its
     /// modno on every write.
-    func setUp(_ r: SetupRequest) async throws {
+    /// Backrest refuses to touch a repository, even to probe one, until it
+    /// has an instance name, so the setup names the Mac before testing.
+    @discardableResult
+    func ensureInstance(_ name: String) async throws -> JSONValue {
         var config = try await BackrestClient.getConfig()
         if (config["instance"]?.string ?? "").isEmpty {
-            config["instance"] = .string(r.instance)
+            config["instance"] = .string(name)
             config = try await BackrestClient.setConfig(config)
+            self.config = config
         }
+        return config
+    }
+
+    func setUp(_ r: SetupRequest) async throws {
+        var config = try await ensureInstance(r.instance)
         let repoID = "main", planID = "home"
         config = try await BackrestClient.addRepo(SetupDefaults.repo(id: repoID, uri: r.uri, password: r.password,
-                                                                    env: r.env, autoUnlock: r.autoUnlock))
+                                                                    env: r.env, flags: r.flags, autoUnlock: r.autoUnlock))
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var plans = config["plans"]?.array ?? []
         plans.removeAll { $0["id"]?.string == planID }
@@ -292,7 +302,7 @@ final class AppModel {
     @ObservationIgnored private var listings: [String: [SnapshotEntry]] = [:]
     @ObservationIgnored private var listingTask: Task<Void, Never>?
 
-    /// The storage's host or folder name, for messages: "homeserver".
+    /// The storage's host or folder name, for messages: "nas.local".
     var storageName: String {
         let uri = savedRepo?.uri ?? ""
         if uri.hasPrefix("sftp:") { return uri.dropFirst(5).split(separator: ":").first.map(String.init) ?? "the storage" }

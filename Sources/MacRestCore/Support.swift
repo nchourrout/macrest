@@ -1,9 +1,12 @@
 import Foundation
 
 public enum Links {
-    /// Backrest's local API, the one its web UI calls. The mac-config Backrest
-    /// template fixes the port.
-    public static let backrestURL = "http://localhost:9898"
+    /// Backrest's local API, the one its web UI calls, on the port MacRest's
+    /// own service binds. `MACREST_BACKREST_URL` points MacRest at another
+    /// Backrest instead (a demo or test instance), and MacRest then leaves its
+    /// own service alone.
+    public static let backrestURL = ProcessInfo.processInfo.environment["MACREST_BACKREST_URL"] ?? "http://localhost:9898"
+    public static var usesExternalBackrest: Bool { ProcessInfo.processInfo.environment["MACREST_BACKREST_URL"] != nil }
 }
 
 /// How bad a reading is. Unknown sits between warning and error: a Backrest

@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    # The package targets macOS 26 with Swift 6.2, so it needs the macOS 26
+    # SDK: no older runner image builds it.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Build
+        run: swift build
+
+      # swift-testing's macro plugin occasionally fails to load on a cold
+      # .build ("plugin for module 'TestingMacros' not found") and loads on
+      # the next attempt, so a failed first run is retried once.
+      - name: Test
+        run: swift test || swift test
+
+      - name: Build the app bundle
+        run: ./build-app.sh "$RUNNER_TEMP/MacRest.app"

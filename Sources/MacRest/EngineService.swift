@@ -54,6 +54,10 @@ final class EngineService {
     /// pinned release when it is missing, and moves our service to it when
     /// MacRest was updated with a new pin.
     func ensure() async {
+        if Links.usesExternalBackrest {
+            state = await answers() ? .running : .failed("No Backrest answers at \(Links.backrestURL).")
+            return
+        }
         let ours = isLoaded(EngineAgent.label)
         if await answers() {
             if ours {

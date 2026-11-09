@@ -34,13 +34,10 @@ import Testing
         let pw = SetupDefaults.password()
         #expect(pw.count == 32)
         #expect(!pw.contains("l") && !pw.contains("0") && !pw.contains("O"))
-        #expect(SetupDefaults.uri(.sftp, host: "ns", path: "/home/nico/restic/mac") == "sftp:ns:/home/nico/restic/mac")
-        #expect(SetupDefaults.uri(.sftp, host: "ns", user: "nico", path: "/r") == "sftp:nico@ns:/r")
-        #expect(SetupDefaults.uri(.local, path: "/Volumes/Backup/restic") == "/Volumes/Backup/restic")
     }
 
     @Test func setupJSON() throws {
-        let repo = SetupDefaults.repo(id: "main", uri: "sftp:ns:/r", password: "pw", autoUnlock: true)
+        let repo = SetupDefaults.repo(id: "main", uri: "sftp:nas:/r", password: "pw", autoUnlock: true)
         #expect(repo["autoUnlock"]?.bool == true)
         #expect(repo["checkPolicy"]?["readDataSubsetPercent"]?.number == 5)
         let plan = SetupDefaults.plan(id: "home", repo: "main", paths: ["/Users/x"], excludes: ["a"], everyHours: 1)

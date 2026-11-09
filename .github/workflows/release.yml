@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        run: swift test || swift test
+
+      - name: Build the app bundle
+        run: ./build-app.sh "$RUNNER_TEMP/MacRest.app"
+
+      # ditto keeps the bundle's symlinks, permissions and signature intact,
+      # which plain zip does not.
+      - name: Package
+        run: |
+          cd "$RUNNER_TEMP"
+          ditto -c -k --keepParent MacRest.app "MacRest-${GITHUB_REF_NAME}.zip"
+          shasum -a 256 "MacRest-${GITHUB_REF_NAME}.zip" > "MacRest-${GITHUB_REF_NAME}.zip.sha256"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "$RUNNER_TEMP/MacRest-${GITHUB_REF_NAME}.zip" \
+            "$RUNNER_TEMP/MacRest-${GITHUB_REF_NAME}.zip.sha256" \
+            --title "MacRest ${GITHUB_REF_NAME#v}" \
+            --generate-notes
