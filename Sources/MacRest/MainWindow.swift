@@ -107,6 +107,9 @@ struct MainWindow: View {
                                                       set: { AppDelegate.opensAtLogin = $0 }))
                 Toggle("Show in Menu Bar", isOn: Binding(get: { AppDelegate.showsMenuBarItem },
                                                          set: { AppDelegate.showsMenuBarItem = $0 }))
+                Divider()
+                Button("About MacRest") { About.show() }
+                Button("MacRest on GitHub") { NSWorkspace.shared.open(Links.project) }
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
             }

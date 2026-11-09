@@ -17,6 +17,14 @@ struct MacRestApp: App {
         }
         .defaultSize(width: 980, height: 660)
         .defaultLaunchBehavior(AppDelegate.opensWindowAtLaunch ? .presented : .suppressed)
+        .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About MacRest") { About.show() }
+            }
+            CommandGroup(replacing: .help) {
+                Button("MacRest on GitHub") { NSWorkspace.shared.open(Links.project) }
+            }
+        }
 
         MenuBarExtra(isInserted: $showsMenuBarItem) {
             MenuPanel(model: AppModel.shared)
@@ -192,7 +200,8 @@ struct MenuPanel: View {
             VStack(spacing: 0) {
                 MenuRow(title: "Open MacRest", shortcut: "⌘O") { open(nil) }
                     .keyboardShortcut("o")
-                MenuRow(title: "Quit MacRest", shortcut: "⌘Q") { NSApp.terminate(nil) }
+                MenuRow(title: "About MacRest", shortcut: "v\(About.version)") { About.show() }
+                MenuRow(title: "Quit", shortcut: "⌘Q") { NSApp.terminate(nil) }
                     .keyboardShortcut("q")
             }
             .padding(.horizontal, -8)

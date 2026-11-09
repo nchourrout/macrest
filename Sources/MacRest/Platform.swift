@@ -1,4 +1,5 @@
 import AppKit
+import MacRestCore
 
 /// The few places MacRest reaches into macOS directly, each in one place.
 
@@ -36,5 +37,33 @@ enum FolderPicker {
         panel.prompt = prompt
         if let start { panel.directoryURL = URL(fileURLWithPath: start) }
         return panel.runModal() == .OK ? panel.urls : []
+    }
+}
+
+/// The About panel: the version people quote in an issue, and where the
+/// project lives.
+enum About {
+    static var version: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+    }
+
+    @MainActor static func show() {
+        let credits = NSMutableAttributedString(
+            string: "A Time Machine alternative built on restic and Backrest.\n",
+            attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
+        credits.append(NSAttributedString(
+            string: "github.com/nchourrout/macrest",
+            attributes: [.font: NSFont.systemFont(ofSize: 11), .link: Links.project]))
+        let centered = NSMutableParagraphStyle()
+        centered.alignment = .center
+        credits.addAttribute(.paragraphStyle, value: centered, range: NSRange(location: 0, length: credits.length))
+        NSApp.activate()
+        // The same string for both keys shows "Version x" alone, without the
+        // build hash, which means nothing to a person.
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationVersion: version,
+            .version: version,
+            .credits: credits,
+        ])
     }
 }

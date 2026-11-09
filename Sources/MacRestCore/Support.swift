@@ -1,6 +1,8 @@
 import Foundation
 
 public enum Links {
+    public static let project = URL(string: "https://github.com/nchourrout/macrest")!
+
     /// Backrest's local API, the one its web UI calls, on the port MacRest's
     /// own service binds. `MACREST_BACKREST_URL` points MacRest at another
     /// Backrest instead (a demo or test instance), and MacRest then leaves its

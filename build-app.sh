@@ -13,8 +13,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 DEST="${1:-$HOME/Applications/MacRest.app}"
-# The marketing version: the release workflow passes the tag (v1.2.0 -> 1.2.0).
-VERSION="${MACREST_VERSION:-0.0.0-dev}"
+# The marketing version: the release workflow passes the tag (v1.2.0 -> 1.2.0);
+# a local build describes itself from git ("0.1.0-2-gf299038": two commits
+# after 0.1.0), so its About panel says what it is built from.
+VERSION="${MACREST_VERSION:-$(git describe --tags --always 2>/dev/null | sed 's/^v//')}"
+VERSION="${VERSION:-dev}"
 
 HASH=$(
   { echo "$VERSION"
