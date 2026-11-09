@@ -13,9 +13,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 DEST="${1:-$HOME/Applications/MacRest.app}"
+# The marketing version: the release workflow passes the tag (v1.2.0 -> 1.2.0).
+VERSION="${MACREST_VERSION:-0.0.0-dev}"
 
 HASH=$(
-  { cat Package.swift build-app.sh render-icon.swift
+  { echo "$VERSION"
+    cat Package.swift build-app.sh render-icon.swift
     find Sources -type f -name '*.swift' -print0 | sort -z | xargs -0 cat
   } | shasum -a 256 | cut -d' ' -f1
 )
@@ -57,7 +60,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <key>CFBundleExecutable</key>           <string>MacRest</string>
     <key>CFBundleIconFile</key>             <string>AppIcon</string>
     <key>CFBundlePackageType</key>          <string>APPL</string>
-    <key>CFBundleShortVersionString</key>   <string>1.0</string>
+    <key>CFBundleShortVersionString</key>   <string>${VERSION}</string>
     <key>CFBundleVersion</key>              <string>${HASH:0:12}</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>LSMinimumSystemVersion</key>       <string>26.0</string>

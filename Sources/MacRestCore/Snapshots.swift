@@ -22,9 +22,9 @@ public struct ResticSnapshot: Decodable, Sendable, Identifiable, Equatable, Hash
         paths = (try? c.decode([String].self, forKey: .paths)) ?? []
         tags = (try? c.decode([String].self, forKey: .tags)) ?? []
         let summary = try? c.decode(JSONValue.self, forKey: .summary)
-        dataAdded = summary?["dataAdded"]?.number.map { Int64($0) }
-        filesChanged = summary?["filesChanged"]?.number.map { Int64($0) }
-        filesNew = summary?["filesNew"]?.number.map { Int64($0) }
+        dataAdded = summary?["dataAdded"]?.int64
+        filesChanged = summary?["filesChanged"]?.int64
+        filesNew = summary?["filesNew"]?.int64
     }
 }
 
@@ -79,12 +79,21 @@ public enum Snapshots {
             let fraction = text[text.index(after: dot)..<zone].prefix(3)
             text = String(text[..<dot]) + "." + fraction.padding(toLength: 3, withPad: "0", startingAt: 0) + String(text[zone...])
         }
+        return isoFractional.date(from: text) ?? isoWhole.date(from: text)
+    }
+
+    // Built once: a listing parses one date per entry.
+    nonisolated(unsafe) private static let isoFractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = f.date(from: text) { return d }
+        return f
+    }()
+
+    nonisolated(unsafe) private static let isoWhole: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
-        return f.date(from: text)
-    }
+        return f
+    }()
 
     /// Where "restore next to the original" puts an item: a new folder beside
     /// it, named after it and the snapshot's date, that restic fills with the

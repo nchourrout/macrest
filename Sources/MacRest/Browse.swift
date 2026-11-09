@@ -134,10 +134,7 @@ struct BrowseView: View {
                     if e.isDirectory { Button("Open") { model.open(e.path) } }
                     Button("Restore…") { restoring = e }
                     Divider()
-                    Button("Copy Path") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(e.path, forType: .string)
-                    }
+                    Button("Copy Path") { Pasteboard.copy(e.path) }
                 }
             } primaryAction: { ids in
                 guard let e = entry(ids) else { return }
@@ -300,13 +297,9 @@ struct RestoreSheet: View {
     }
 
     private func choose() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Restore Here"
-        panel.directoryURL = URL(fileURLWithPath: (entry.path as NSString).deletingLastPathComponent)
-        guard panel.runModal() == .OK, let dir = panel.url?.path else { return }
+        guard let dir = FolderPicker.choose(prompt: "Restore Here",
+                                            startingAt: (entry.path as NSString).deletingLastPathComponent).first?.path
+        else { return }
         let inside = (dir as NSString).appendingPathComponent(entry.name)
         chosen = Snapshots.restoreTarget(for: inside, snapshotTime: snapshot?.time ?? Date()) {
             FileManager.default.fileExists(atPath: $0)
@@ -343,18 +336,3 @@ struct RestoreStatus: View {
     }
 }
 
-/// A centred wait with a line saying what is being waited on.
-struct Loading: View {
-    let title: String
-    let detail: String
-
-    var body: some View {
-        VStack(spacing: 10) {
-            ProgressView().controlSize(.regular)
-            Text(title).font(.headline)
-            Text(detail).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-        }
-        .padding(40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}

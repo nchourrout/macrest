@@ -160,7 +160,7 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
             let b = try? c.decode(JSONValue.self, forKey: .operationBackup)
             let status = b?["lastStatus"]?["status"]
             let summary = b?["lastStatus"]?["summary"]
-            func i64(_ v: JSONValue?) -> Int64? { v?.number.map { Int64($0) } }
+            func i64(_ v: JSONValue?) -> Int64? { v?.int64 }
             backup = BackupProgress(
                 percentDone: status?["percentDone"]?.number, bytesDone: i64(status?["bytesDone"]),
                 totalBytes: i64(status?["totalBytes"]), filesDone: i64(status?["filesDone"]),
@@ -170,9 +170,9 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
                 errors: b?["errors"]?.array?.count ?? 0)
         case .stats:
             let s = (try? c.decode(JSONValue.self, forKey: .operationStats))?["stats"]
-            stats = Stats(totalSize: s?["totalSize"]?.number.map { Int64($0) },
-                          uncompressedSize: s?["totalUncompressedSize"]?.number.map { Int64($0) },
-                          snapshotCount: s?["snapshotCount"]?.number.map { Int64($0) })
+            stats = Stats(totalSize: s?["totalSize"]?.int64,
+                          uncompressedSize: s?["totalUncompressedSize"]?.int64,
+                          snapshotCount: s?["snapshotCount"]?.int64)
         case .hook:
             let h = try? c.decode(JSONValue.self, forKey: .operationRunHook)
             hookCondition = h?["condition"]?.string
@@ -317,5 +317,33 @@ extension Activity {
         flows.flatMap(\.steps)
             .filter { $0.kind == kind && $0.outcome != .running && $0.outcome != .pending }
             .max { $0.id < $1.id }
+    }
+}
+
+/// Retention keeps failing on a lock nobody holds any more.
+public struct StaleLock: Sendable, Equatable {
+    /// Consecutive retention runs that hit it, newest first.
+    public var failedRuns: Int
+    /// Every retention run in the fetched log failed, so the streak may go
+    /// back further than the log does.
+    public var coversWholeLog: Bool
+    public var reason: String
+}
+
+extension Activity {
+    /// Retention needs an exclusive lock, so a lock left by a crashed run
+    /// fails it after every backup while the backups themselves (a shared
+    /// lock) keep succeeding: easy to miss for weeks. A failure older than
+    /// the last unlock does not count: the lock it hit is gone, and only the
+    /// next run can say whether retention works again.
+    public static func staleLock(in flows: [ActivityFlow], unlockedAt: Date?) -> StaleLock? {
+        func lockFailure(_ op: BackrestOperation) -> Bool {
+            op.outcome.severity == .error && (op.reason ?? "").contains("locked")
+        }
+        let forgets = flows.flatMap(\.steps).filter { $0.kind == .forget }.sorted { $0.id > $1.id }
+        guard let last = forgets.first, lockFailure(last), let reason = last.reason else { return nil }
+        if let unlockedAt, (last.end ?? last.start) < unlockedAt { return nil }
+        let streak = forgets.prefix(while: lockFailure).count
+        return StaleLock(failedRuns: streak, coversWholeLog: streak == forgets.count, reason: reason)
     }
 }

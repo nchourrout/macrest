@@ -101,25 +101,55 @@ public enum Format {
 
     /// Dates are English whatever the system locale, like every label here.
     public static func date(_ date: Date, _ pattern: String, timeZone: TimeZone = .current) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = timeZone
-        f.dateFormat = pattern
-        return f.string(from: date)
+        dateFormatter(pattern, timeZone).string(from: date)
     }
 
     /// A count with English thousands separators: "1,036", never "1.036",
     /// which reads as a decimal.
     public static func count<N: BinaryInteger>(_ n: N) -> String {
+        countFormatter.string(from: NSNumber(value: Int64(clamping: n))) ?? String(n)
+    }
+
+    // Formatters are costly to build and these run per row (the snapshot
+    // timeline has hundreds), so each is built once. Formatting with a
+    // configured DateFormatter or NumberFormatter is thread-safe; the lock
+    // guards only the cache.
+    private static let cache = FormatterCache()
+
+    private static func dateFormatter(_ pattern: String, _ timeZone: TimeZone) -> DateFormatter {
+        cache.formatter(key: pattern + "|" + timeZone.identifier) {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.timeZone = timeZone
+            f.dateFormat = pattern
+            return f
+        }
+    }
+
+    private static let countFormatter: NumberFormatter = {
         let f = NumberFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.numberStyle = .decimal
         f.usesGroupingSeparator = true
         f.groupingSeparator = ","
-        return f.string(from: NSNumber(value: Int64(n))) ?? String(n)
-    }
+        return f
+    }()
 
     public static func plural(_ n: Int, _ word: String) -> String {
         "\(n) \(word)\(n == 1 ? "" : "s")"
+    }
+}
+
+private final class FormatterCache: @unchecked Sendable {
+    private var formatters: [String: DateFormatter] = [:]
+    private let lock = NSLock()
+
+    func formatter(key: String, make: () -> DateFormatter) -> DateFormatter {
+        lock.lock()
+        defer { lock.unlock() }
+        if let f = formatters[key] { return f }
+        let f = make()
+        formatters[key] = f
+        return f
     }
 }

@@ -66,7 +66,11 @@ public enum JSONValue: Codable, Sendable, Equatable {
         }
     }
 
-    public var int: Int? { number.map { Int($0) } }
+    /// Nil rather than a crash for a fraction, NaN or a value out of range:
+    /// `Int(Double)` traps on those.
+    public var int: Int? { number.flatMap { Int(exactly: $0.rounded()) } }
+
+    public var int64: Int64? { number.flatMap { Int64(exactly: $0.rounded()) } }
 
     public var bool: Bool? {
         if case let .bool(b) = self { return b }

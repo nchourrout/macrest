@@ -264,14 +264,7 @@ final class AppModel {
     /// A failure older than the last unlock no longer counts: the lock it hit
     /// is gone, and the next retention run (after the next backup) is the
     /// first that can say whether it worked.
-    var staleLock: (count: Int, all: Bool, reason: String)? {
-        let forgets = flows.flatMap(\.steps).filter { $0.kind == .forget }.sorted { $0.id > $1.id }
-        guard let last = forgets.first, last.outcome.severity == .error,
-              let reason = last.reason, reason.contains("locked") else { return nil }
-        if let unlockedAt, (last.end ?? last.start) < unlockedAt { return nil }
-        let count = forgets.prefix { $0.outcome.severity == .error && ($0.reason ?? "").contains("locked") }.count
-        return (count, count == forgets.count, reason)
-    }
+    var staleLock: StaleLock? { Activity.staleLock(in: flows, unlockedAt: unlockedAt) }
 
     private func perform(_ work: () async throws -> Void) async {
         sentAt = Date()

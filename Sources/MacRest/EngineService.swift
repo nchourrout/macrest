@@ -58,7 +58,7 @@ final class EngineService {
             state = await answers() ? .running : .failed("No Backrest answers at \(Links.backrestURL).")
             return
         }
-        let ours = isLoaded(EngineAgent.label)
+        let ours = await isLoaded(EngineAgent.label)
         if await answers() {
             if ours {
                 if !FileManager.default.fileExists(atPath: paths.binary) || agentIsStale {
@@ -69,7 +69,9 @@ final class EngineService {
                     state = .running
                 }
             } else {
-                state = .external(label: EngineAgent.homebrewLabels.first(where: isLoaded))
+                var homebrew: String?
+                for label in EngineAgent.homebrewLabels where await isLoaded(label) { homebrew = label; break }
+                state = .external(label: homebrew)
             }
             return
         }
@@ -82,10 +84,10 @@ final class EngineService {
         // `brew services stop` unloads it and removes its plist, so it does
         // not come back at the next login; bootout covers a machine without brew.
         if let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: FileManager.default.isExecutableFile) {
-            _ = run(brew, ["services", "stop", "backrest"])
+            await run(brew, ["services", "stop", "backrest"])
         }
-        for label in EngineAgent.homebrewLabels where isLoaded(label) {
-            _ = run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
+        for label in EngineAgent.homebrewLabels where await isLoaded(label) {
+            await run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
         }
         // The port has to be free before ours binds it.
         for _ in 0..<50 where await answers() { try? await Task.sleep(for: .milliseconds(200)) }
@@ -93,8 +95,8 @@ final class EngineService {
     }
 
     func restart() async {
-        guard isLoaded(EngineAgent.label) else { await install(); return }
-        _ = run("/bin/launchctl", ["kickstart", "-k", "gui/\(uid)/\(EngineAgent.label)"])
+        guard await isLoaded(EngineAgent.label) else { await install(); return }
+        await run("/bin/launchctl", ["kickstart", "-k", "gui/\(uid)/\(EngineAgent.label)"])
         await waitUntilAnswering()
     }
 
@@ -104,10 +106,10 @@ final class EngineService {
         do {
             if !FileManager.default.isExecutableFile(atPath: paths.binary) {
                 state = .installing("Downloading Backrest \(BackrestRelease.version)…")
-                try await download()
+                try await Self.download(to: paths.binary)
             }
             state = .installing("Starting Backrest…")
-            try writeAgent()
+            try await writeAgent()
             await waitUntilAnswering()
         } catch {
             log.error("install failed: \(error.localizedDescription, privacy: .public)")
@@ -115,7 +117,8 @@ final class EngineService {
         }
     }
 
-    private func download() async throws {
+    /// Off the main actor: hashing and unpacking a 30 MB archive is not UI work.
+    nonisolated private static func download(to binary: String) async throws {
         guard let expected = BackrestRelease.checksum() else { throw Failure("No Backrest build for \(BackrestRelease.arch).") }
         let (file, response) = try await URLSession.shared.download(from: BackrestRelease.url())
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw Failure("The Backrest download failed.") }
@@ -129,20 +132,20 @@ final class EngineService {
         defer { try? FileManager.default.removeItem(at: work) }
         let archive = work.appending(path: BackrestRelease.asset())
         try data.write(to: archive)
-        guard run("/usr/bin/tar", ["-xzf", archive.path, "-C", work.path]) == 0,
+        guard await run("/usr/bin/tar", ["-xzf", archive.path, "-C", work.path]) == 0,
               FileManager.default.fileExists(atPath: work.appending(path: "backrest").path)
         else { throw Failure("Could not unpack the Backrest download.") }
 
-        let dir = (paths.binary as NSString).deletingLastPathComponent
+        let dir = (binary as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(atPath: paths.binary)
-        try FileManager.default.moveItem(at: work.appending(path: "backrest"), to: URL(fileURLWithPath: paths.binary))
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: paths.binary)
+        try? FileManager.default.removeItem(atPath: binary)
+        try FileManager.default.moveItem(at: work.appending(path: "backrest"), to: URL(fileURLWithPath: binary))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary)
         removeOldVersions(keeping: dir)
     }
 
     /// Earlier pinned versions, once the new one is in place.
-    private func removeOldVersions(keeping dir: String) {
+    nonisolated private static func removeOldVersions(keeping dir: String) {
         let parent = (dir as NSString).deletingLastPathComponent
         for name in (try? FileManager.default.contentsOfDirectory(atPath: parent)) ?? []
         where name.hasPrefix("backrest-") && (parent as NSString).appendingPathComponent(name) != dir {
@@ -158,15 +161,15 @@ final class EngineService {
         return current != EngineAgent.plist(paths) as NSDictionary
     }
 
-    private func writeAgent() throws {
+    private func writeAgent() async throws {
         for dir in [(agentPlist as NSString).deletingLastPathComponent, (paths.log as NSString).deletingLastPathComponent,
                     (paths.config as NSString).deletingLastPathComponent, paths.data] {
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         }
         try EngineAgent.plistData(paths).write(to: URL(fileURLWithPath: agentPlist), options: .atomic)
         // Reload so a changed binary path or environment takes effect.
-        if isLoaded(EngineAgent.label) { _ = run("/bin/launchctl", ["bootout", "gui/\(uid)/\(EngineAgent.label)"]) }
-        guard run("/bin/launchctl", ["bootstrap", "gui/\(uid)", agentPlist]) == 0 else {
+        if await isLoaded(EngineAgent.label) { await run("/bin/launchctl", ["bootout", "gui/\(uid)/\(EngineAgent.label)"]) }
+        guard await run("/bin/launchctl", ["bootstrap", "gui/\(uid)", agentPlist]) == 0 else {
             throw Failure("launchd refused the Backrest service. Check Login Items in System Settings.")
         }
     }
@@ -181,16 +184,29 @@ final class EngineService {
 
     // MARK: Probes
 
+    /// The dashboard rather than GetConfig: a liveness probe has no business
+    /// fetching the config, which carries the repository passwords.
     private func answers() async -> Bool {
-        (try? await BackrestClient.call("GetConfig", JSONValue.object([:]), timeout: 2)) != nil
+        (try? await BackrestClient.call("GetSummaryDashboard", JSONValue.object([:]), timeout: 2)) != nil
     }
 
-    private func isLoaded(_ label: String) -> Bool {
-        run("/bin/launchctl", ["print", "gui/\(uid)/\(label)"], quiet: true) == 0
+    private func isLoaded(_ label: String) async -> Bool {
+        await Self.run("/bin/launchctl", ["print", "gui/\(uid)/\(label)"], quiet: true) == 0
     }
 
     @discardableResult
-    private func run(_ tool: String, _ args: [String], quiet: Bool = false) -> Int32 {
+    private func run(_ tool: String, _ args: [String]) async -> Int32 {
+        await Self.run(tool, args)
+    }
+
+    /// A tool run to completion off the main actor, so a slow one (`brew
+    /// services stop` takes seconds) never stalls the UI.
+    @discardableResult
+    nonisolated private static func run(_ tool: String, _ args: [String], quiet: Bool = false) async -> Int32 {
+        await Task.detached { runBlocking(tool, args, quiet: quiet) }.value
+    }
+
+    nonisolated private static func runBlocking(_ tool: String, _ args: [String], quiet: Bool) -> Int32 {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: tool)
         p.arguments = args

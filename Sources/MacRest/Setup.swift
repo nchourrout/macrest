@@ -301,13 +301,7 @@ struct StorageFields: View {
     }
 
     private func choose() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Use This Folder"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        form.folder = url.path
+        if let url = FolderPicker.choose(prompt: "Use This Folder").first { form.folder = url.path }
     }
 
     // MARK: SFTP
@@ -399,25 +393,6 @@ struct StorageFields: View {
                 .scrollContentBackground(.hidden).padding(4)
                 .background(Theme.track, in: RoundedRectangle(cornerRadius: 6))
         }
-    }
-}
-
-enum Pasteboard {
-    static func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-}
-
-/// Runs a command in a new Terminal window, for the one step that needs a
-/// person at a prompt (a server password for ssh-copy-id).
-enum Terminal {
-    static func run(_ command: String) {
-        let file = FileManager.default.temporaryDirectory.appending(path: "macrest-\(UUID().uuidString.prefix(8)).command")
-        let script = "#!/bin/zsh -l\n\(command)\necho\nread -sk 1 '?Done. Press any key to close.'\n"
-        guard (try? script.write(to: file, atomically: true, encoding: .utf8)) != nil else { return }
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
-        NSWorkspace.shared.open(file)
     }
 }
 

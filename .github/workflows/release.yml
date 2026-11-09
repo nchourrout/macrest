@@ -2,7 +2,15 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*.*.*"]
+  # A dry run builds and packages exactly as a release would, and keeps the
+  # zip as an artifact instead of publishing it.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp into the dry-run build (no release is published)"
+        required: true
+        default: "0.0.0-dryrun"
 
 permissions:
   contents: write
@@ -10,29 +18,50 @@ permissions:
 jobs:
   release:
     runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
     steps:
       - uses: actions/checkout@v5
 
+      - name: Version
+        run: echo "MACREST_VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+
       - name: Test
-        run: swift test || swift test
+        run: swift build -Xswiftc -warnings-as-errors && (swift test || swift test)
 
       - name: Build the app bundle
         run: ./build-app.sh "$RUNNER_TEMP/MacRest.app"
+
+      - name: Check the stamped version
+        run: |
+          stamped=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$RUNNER_TEMP/MacRest.app/Contents/Info.plist")
+          test "$stamped" = "$MACREST_VERSION" || { echo "bundle says $stamped, expected $MACREST_VERSION"; exit 1; }
 
       # ditto keeps the bundle's symlinks, permissions and signature intact,
       # which plain zip does not.
       - name: Package
         run: |
           cd "$RUNNER_TEMP"
-          ditto -c -k --keepParent MacRest.app "MacRest-${GITHUB_REF_NAME}.zip"
-          shasum -a 256 "MacRest-${GITHUB_REF_NAME}.zip" > "MacRest-${GITHUB_REF_NAME}.zip.sha256"
+          ditto -c -k --keepParent MacRest.app "MacRest-${MACREST_VERSION}.zip"
+          shasum -a 256 "MacRest-${MACREST_VERSION}.zip" > "MacRest-${MACREST_VERSION}.zip.sha256"
+
+      - name: Keep the dry-run build
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacRest-${{ env.MACREST_VERSION }}
+          path: |
+            ${{ runner.temp }}/MacRest-${{ env.MACREST_VERSION }}.zip
+            ${{ runner.temp }}/MacRest-${{ env.MACREST_VERSION }}.zip.sha256
 
       - name: Publish
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            "$RUNNER_TEMP/MacRest-${GITHUB_REF_NAME}.zip" \
-            "$RUNNER_TEMP/MacRest-${GITHUB_REF_NAME}.zip.sha256" \
-            --title "MacRest ${GITHUB_REF_NAME#v}" \
+            "$RUNNER_TEMP/MacRest-${MACREST_VERSION}.zip" \
+            "$RUNNER_TEMP/MacRest-${MACREST_VERSION}.zip.sha256" \
+            --title "MacRest ${MACREST_VERSION}" \
             --generate-notes

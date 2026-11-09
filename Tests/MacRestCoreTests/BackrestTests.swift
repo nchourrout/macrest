@@ -33,6 +33,10 @@ func roundTrip(_ v: JSONValue) throws -> JSONValue {
         // Bools and numbers stay apart.
         let mixed = try JSONDecoder().decode(JSONValue.self, from: Data("[1, true, 0, false, 2.5]".utf8))
         #expect(mixed == .array([.number(1), .bool(true), .number(0), .bool(false), .number(2.5)]))
+        // Out-of-range and non-numbers read as nil, never trap.
+        #expect(JSONValue.number(1e30).int == nil)
+        #expect(JSONValue.number(.nan).int64 == nil)
+        #expect(JSONValue.string("1794224245243").int64 == 1_794_224_245_243)
     }
 
     @Test func readsPlanAndRepo() throws {
@@ -148,6 +152,17 @@ let operationsJSON = """
         #expect(running.primary.backup?.percentDone == 0.42)
         #expect(running.primary.backup?.currentFile == "/Users/alex/a.txt")
         #expect(flows[0].primary.kind == .unknown)
+    }
+
+    @Test func staleLock() throws {
+        let flows = Activity.flows(try Activity.decode(Data(operationsJSON.utf8)), now: now).flows
+        let lock = try #require(Activity.staleLock(in: flows, unlockedAt: nil))
+        #expect(lock.failedRuns == 1)
+        #expect(lock.coversWholeLog)
+        #expect(lock.reason.hasPrefix("unable to create lock"))
+        // The fixture's failed forget ended at 1793700073; an unlock after it clears the warning.
+        #expect(Activity.staleLock(in: flows, unlockedAt: Date(timeIntervalSince1970: 1_793_700_100)) == nil)
+        #expect(Activity.staleLock(in: flows, unlockedAt: Date(timeIntervalSince1970: 1_793_699_000)) != nil)
     }
 
     @Test func fatalReason() {

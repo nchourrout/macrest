@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Security
 
 /// The repository password, kept in the login keychain as well as in
@@ -15,6 +16,10 @@ enum Keychain {
         var add = base
         add[kSecValueData as String] = Data(password.utf8)
         add[kSecAttrLabel as String] = "MacRest: \(account)"
-        SecItemAdd(add as CFDictionary, nil)
+        let status = SecItemAdd(add as CFDictionary, nil)
+        if status != errSecSuccess {
+            Logger(subsystem: "com.nchourrout.macrest", category: "keychain")
+                .error("saving the repository password failed: \(status)")
+        }
     }
 }
