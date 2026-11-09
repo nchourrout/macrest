@@ -49,12 +49,19 @@ public enum EngineAgent {
         public var config: String
         public var data: String
         public var log: String
+        /// The restic Backrest downloads into its data folder. Named
+        /// explicitly: left to search PATH, Backrest takes any restic of the
+        /// right version it finds there (Homebrew's), and Full Disk Access is
+        /// granted per executable, so Mail, Messages and Safari would be
+        /// skipped silently.
+        public var restic: String
 
         public init(home: String, support: String) {
             binary = support + "/backrest-\(BackrestRelease.version)/backrest"
             config = home + "/.config/backrest/config.json"
             data = home + "/.local/share/backrest"
             log = home + "/Library/Logs/MacRest/backrest.log"
+            restic = home + "/.local/share/backrest/restic"
         }
     }
 
@@ -67,12 +74,18 @@ public enum EngineAgent {
                 "BACKREST_DATA": paths.data,
                 // Loopback only: the API has no auth, and it hands out the repo password.
                 "BACKREST_PORT": "127.0.0.1:9898",
-                // restic finds ssh and friends here; launchd's default PATH is minimal.
-                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
+                "BACKREST_RESTIC_COMMAND": paths.restic,
+                // System tools only (ssh is /usr/bin/ssh). No /opt/homebrew/bin:
+                // see `restic` above.
+                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             ],
             "RunAtLoad": true,
             "KeepAlive": true,
-            "ProcessType": "Background",
+            // Standard, never Background: launchd throttles a Background job's
+            // CPU and I/O and its restic children inherit it, which made a
+            // folder listing take 25 s instead of 3 (restic decrypts the index
+            // on every call).
+            "ProcessType": "Standard",
             "StandardOutPath": paths.log,
             "StandardErrorPath": paths.log,
             "AssociatedBundleIdentifiers": [appBundleID],

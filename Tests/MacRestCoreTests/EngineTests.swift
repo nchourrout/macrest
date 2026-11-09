@@ -19,6 +19,10 @@ import Testing
         #expect(back["Label"] as? String == "com.nchourrout.macrest.backrest")
         #expect((back["EnvironmentVariables"] as? [String: String])?["BACKREST_PORT"] == "127.0.0.1:9898")
         #expect((back["AssociatedBundleIdentifiers"] as? [String]) == ["com.nchourrout.macrest"])
+        let env = try #require(back["EnvironmentVariables"] as? [String: String])
+        #expect(env["BACKREST_RESTIC_COMMAND"] == "/Users/x/.local/share/backrest/restic")
+        #expect(env["PATH"]?.contains("homebrew") == false)
+        #expect(back["ProcessType"] as? String == "Standard")
     }
 
     @Test func setupDefaults() {

@@ -57,8 +57,10 @@ final class EngineService {
         let ours = isLoaded(EngineAgent.label)
         if await answers() {
             if ours {
-                if !FileManager.default.fileExists(atPath: paths.binary) {
-                    await install()   // a newer pin: same folders, new binary
+                if !FileManager.default.fileExists(atPath: paths.binary) || agentIsStale {
+                    // A newer pin, or a service definition from an older
+                    // MacRest: same folders, rewritten agent, restarted.
+                    await install()
                 } else {
                     state = .running
                 }
@@ -142,6 +144,14 @@ final class EngineService {
         where name.hasPrefix("backrest-") && (parent as NSString).appendingPathComponent(name) != dir {
             try? FileManager.default.removeItem(atPath: (parent as NSString).appendingPathComponent(name))
         }
+    }
+
+    /// The plist on disk differs from what this MacRest would write.
+    private var agentIsStale: Bool {
+        guard let onDisk = FileManager.default.contents(atPath: agentPlist),
+              let current = try? PropertyListSerialization.propertyList(from: onDisk, format: nil) as? NSDictionary
+        else { return true }
+        return current != EngineAgent.plist(paths) as NSDictionary
     }
 
     private func writeAgent() throws {
