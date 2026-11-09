@@ -55,7 +55,7 @@ jobs:
 
       # Every green build of main or a pull request can be downloaded and
       # tried without cutting a release.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: MacRest-${{ github.sha }}
           path: ${{ runner.temp }}/MacRest.zip
