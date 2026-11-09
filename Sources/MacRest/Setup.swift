@@ -128,7 +128,7 @@ struct SetupView: View {
                 Text("What and when")
             } footer: {
                 Text((instanceIsSet ? "" : "The name tags every snapshot. To continue another Mac's history in an existing repository, use that Mac's name. ")
-                     + "Stale locks from a crashed run otherwise stop old snapshots from being removed; clearing them is safe while this Mac is the repository's only user. Everything here can be changed later.")
+                     + "Stale locks from a crashed run otherwise stop old snapshots from being removed; clearing them is safe while this Mac is the only one backing up there. Everything here can be changed later.")
             }
 
             SwiftUI.Section {

@@ -65,7 +65,7 @@ struct MainWindow: View {
             case .browse: BrowseView(model: model)
             case .schedule: ScheduleView(model: model)
             case .folders: FoldersView(model: model)
-            case .repository: RepositoryView(model: model)
+            case .storage: StorageView(model: model)
             }
         }
     }
@@ -416,7 +416,7 @@ struct StaleLockRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Old snapshots are not being removed")
                     .font(.headline)
-                Text("Retention failed after \(all ? "every backup in the log (\(count))" : "the last \(Format.plural(count, "backup"))"): a lock left behind by an earlier run. Backups still run, but the repository keeps growing.")
+                Text("Retention failed after \(all ? "every backup in the log (\(count))" : "the last \(Format.plural(count, "backup"))"): a lock left behind by an earlier run. Backups still run, but the storage keeps growing.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -697,7 +697,7 @@ struct ScheduleView: View {
                 plan.wrappedValue.retention = .lastN($0)
             }
         case .keepAll:
-            Text("Nothing is ever deleted. The repository only grows.").foregroundStyle(.secondary)
+            Text("Nothing is ever deleted. The storage only grows.").foregroundStyle(.secondary)
         }
     }
 }
@@ -822,7 +822,7 @@ struct FoldersView: View {
     }
 }
 
-// MARK: - Repository
+// MARK: - Storage
 
 /// One maintenance job: when it last ran and how that went, when it runs
 /// next, and a button to run it now.
@@ -833,7 +833,15 @@ struct MaintenanceRow<Action: View>: View {
     let next: Date?
     var note: String?
     var noteSeverity: Severity = .ok
+    /// The last unlock. A failure before it hit a lock that is gone, so it is
+    /// shown greyed as history rather than as a live problem.
+    var unlockedAt: Date?
     @ViewBuilder var action: Action
+
+    private var superseded: Bool {
+        guard let last, last.outcome.severity != .ok, let unlockedAt else { return false }
+        return (last.end ?? last.start) < unlockedAt
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -841,7 +849,10 @@ struct MaintenanceRow<Action: View>: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(title)
-                    if let last, last.outcome != .success { Tag(text: last.outcome.label, severity: last.outcome.severity) }
+                    if let last, last.outcome != .success {
+                        Tag(text: superseded ? "Failed before unlock" : last.outcome.label,
+                            severity: superseded ? .ok : last.outcome.severity)
+                    }
                 }
                 Text(status).font(.callout).foregroundStyle(noteSeverity == .ok ? Color.secondary : Theme.color(noteSeverity))
                     .lineLimit(2)
@@ -857,7 +868,13 @@ struct MaintenanceRow<Action: View>: View {
         var parts: [String] = []
         if let last {
             let ago = Format.ago(Int(Date().timeIntervalSince(last.end ?? last.start)))
-            parts.append(last.outcome == .success ? "Last ran \(ago)" : "\(last.outcome.label) \(ago)" + (last.reason.map { ": \($0)" } ?? ""))
+            if last.outcome == .success {
+                parts.append("Last ran \(ago)")
+            } else if superseded {
+                parts.append("Last run \(ago) hit the lock since removed; the next run will tell")
+            } else {
+                parts.append("\(last.outcome.label) \(ago)" + (last.reason.map { ": \($0)" } ?? ""))
+            }
         } else if note == nil {
             parts.append("Not in the recent log")
         }
@@ -868,20 +885,24 @@ struct MaintenanceRow<Action: View>: View {
 }
 
 extension MaintenanceRow where Action == EmptyView {
-    init(title: String, symbol: String, last: BackrestOperation?, next: Date?, note: String? = nil, noteSeverity: Severity = .ok) {
-        self.init(title: title, symbol: symbol, last: last, next: next, note: note, noteSeverity: noteSeverity) { EmptyView() }
+    init(title: String, symbol: String, last: BackrestOperation?, next: Date?, note: String? = nil,
+         noteSeverity: Severity = .ok, unlockedAt: Date? = nil) {
+        self.init(title: title, symbol: symbol, last: last, next: next, note: note, noteSeverity: noteSeverity,
+                  unlockedAt: unlockedAt) { EmptyView() }
     }
 }
 
-struct RepositoryView: View {
+/// Where the backups are kept and keeping them healthy. Named Storage, not
+/// restic's "repository", which stays only where a restic term helps.
+struct StorageView: View {
     @Bindable var model: AppModel
     @ViewState private var confirmPrune = false
 
     var body: some View {
         if let repo = Binding($model.repo) {
             Form {
-                SwiftUI.Section("Repository") {
-                    LabeledContent("Location") { Text(repo.wrappedValue.uri).textSelection(.enabled) }
+                SwiftUI.Section("Storage") {
+                    LabeledContent("Backed up to") { Text(repo.wrappedValue.uri).textSelection(.enabled) }
                     LabeledContent("Stored") {
                         HStack(spacing: 8) {
                             if let stats = model.stats?.0, let at = model.stats?.1, let size = stats.totalSize {
@@ -900,15 +921,15 @@ struct RepositoryView: View {
                 SwiftUI.Section {
                     MaintenanceRow(title: "Retention", symbol: "calendar.badge.minus",
                                    last: Activity.lastFinished(.forget, in: model.flows), next: nil,
-                                   note: "Runs after every backup")
+                                   note: "Runs after every backup", unlockedAt: model.unlockedAt)
                     MaintenanceRow(title: "Check", symbol: "checkmark.shield",
                                    last: Activity.lastFinished(.check, in: model.flows),
-                                   next: model.scheduled.first { $0.kind == .check }?.start) {
+                                   next: model.scheduled.first { $0.kind == .check }?.start, unlockedAt: model.unlockedAt) {
                         Button("Check Now") { Task { await model.repoTask(.check) } }
                     }
                     MaintenanceRow(title: "Prune", symbol: "scissors",
                                    last: Activity.lastFinished(.prune, in: model.flows),
-                                   next: model.scheduled.first { $0.kind == .prune }?.start) {
+                                   next: model.scheduled.first { $0.kind == .prune }?.start, unlockedAt: model.unlockedAt) {
                         Button("Prune Now…") { confirmPrune = true }
                     }
                     MaintenanceRow(title: "Locks", symbol: model.staleLock == nil ? "lock.open" : "lock.trianglebadge.exclamationmark",
@@ -922,7 +943,7 @@ struct RepositoryView: View {
                 } header: {
                     Text("Maintenance")
                 } footer: {
-                    Text("A lock left by a crashed run blocks retention, prune and check until it is removed. Clearing it automatically is safe while this Mac is the repository's only user.")
+                    Text("A lock left by a crashed run blocks retention, prune and check until it is removed. Clearing it automatically is safe while this Mac is the only one backing up to this storage.")
                 }
                 .disabled(model.starting)
 
@@ -956,10 +977,10 @@ struct RepositoryView: View {
                 }
             }
             .formStyle(.grouped)
-            .confirmationDialog("Prune the repository now?", isPresented: $confirmPrune) {
+            .confirmationDialog("Prune the storage now?", isPresented: $confirmPrune) {
                 Button("Prune") { Task { await model.repoTask(.prune) } }
             } message: {
-                Text("Prune rewrites packs on the server and holds an exclusive lock: backups wait until it finishes, which can take a while on a large repository.")
+                Text("Prune rewrites packs on the server and holds an exclusive lock: backups wait until it finishes, which can take a while when there is a lot stored.")
             }
         }
     }

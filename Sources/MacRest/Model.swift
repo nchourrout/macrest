@@ -6,7 +6,7 @@ import Observation
 /// The panes of the main window. Lives on the model so the menu bar panel can
 /// open the window on a given one (Restore… opens Browse).
 enum Pane: String, CaseIterable, Identifiable {
-    case activity = "Activity", browse = "Browse", schedule = "Schedule", folders = "Folders", repository = "Repository"
+    case activity = "Activity", browse = "Browse", schedule = "Schedule", folders = "Folders", storage = "Storage"
     var id: String { rawValue }
     var symbol: String {
         switch self {
@@ -14,7 +14,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .browse: "folder.badge.gearshape"
         case .schedule: "calendar"
         case .folders: "folder"
-        case .repository: "externaldrive.connected.to.line.below"
+        case .storage: "externaldrive.connected.to.line.below"
         }
     }
 }
