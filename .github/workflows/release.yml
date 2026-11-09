@@ -22,7 +22,7 @@ jobs:
     env:
       VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Version
         run: echo "MACREST_VERSION=${VERSION#v}" >> "$GITHUB_ENV"
