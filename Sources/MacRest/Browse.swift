@@ -123,7 +123,10 @@ struct BrowseView: View {
                 }
             } primaryAction: { ids in
                 guard let e = entry(ids) else { return }
-                if e.isDirectory { selection = []; model.open(e.path) } else { restoring = e }
+                // Double-click only ever navigates. Restoring is always an
+                // explicit Restore… (button, menu or Cmd-Return): a stray
+                // double-click on a file should not start one.
+                if e.isDirectory { selection = []; model.open(e.path) }
             }
         }
     }
@@ -148,7 +151,7 @@ struct BrowseView: View {
             if let target = lastTarget {
                 RestoreStatus(target: target, flows: model.flows)
             } else {
-                Text("Double-click a folder to open it, a file to restore it.").foregroundStyle(.secondary)
+                Text("Double-click a folder to open it. Select a file or folder, then Restore….").foregroundStyle(.secondary)
             }
             Spacer()
             Button("Restore…") { restoring = entry(selection) }
