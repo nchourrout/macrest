@@ -1,0 +1,174 @@
+import AppKit
+import MacRestCore
+import SwiftUI
+
+@main
+struct MacRestApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @AppStorage(AppDelegate.menuBarKey) private var showsMenuBarItem = true
+
+    var body: some Scene {
+        // Opens at launch only when there is no menu bar icon to open it from:
+        // with the icon, a login launch stays quiet. `--window [pane]` forces
+        // it, for checking the window without clicking.
+        Window("MacRest", id: MainWindow.id) {
+            MainWindow(model: AppModel.shared)
+        }
+        .defaultSize(width: 980, height: 660)
+        .defaultLaunchBehavior(AppDelegate.opensWindowAtLaunch ? .presented : .suppressed)
+
+        MenuBarExtra(isInserted: $showsMenuBarItem) {
+            MenuPanel(model: AppModel.shared)
+        } label: {
+            MenuLabel(model: AppModel.shared)
+        }
+        .menuBarExtraStyle(.window)
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static let menuBarKey = "showsMenuBarItem"
+
+    @MainActor static var showsMenuBarItem: Bool {
+        get { UserDefaults.standard.object(forKey: menuBarKey) as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: menuBarKey)
+            updateActivationPolicy()
+        }
+    }
+
+    static var opensWindowAtLaunch: Bool {
+        CommandLine.arguments.contains("--window")
+            || !(UserDefaults.standard.object(forKey: menuBarKey) as? Bool ?? true)
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--render"), i + 1 < args.count {
+            NSApp.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                await Render.run(to: URL(fileURLWithPath: args[i + 1]))
+                exit(0)
+            }
+            return
+        }
+        if let i = args.firstIndex(of: "--window"), i + 1 < args.count, let pane = Pane(rawValue: args[i + 1].capitalized) {
+            AppModel.shared.pane = pane
+        }
+        Self.updateActivationPolicy()
+        AppModel.shared.start()
+    }
+
+    /// A Dock icon while the window is open, or always when there is no menu
+    /// bar icon (the Dock is then the only way back in). Otherwise the app
+    /// lives in the menu bar alone, like MacStatus.
+    @MainActor static func updateActivationPolicy() {
+        let regular = AppModel.shared.windowVisible || !showsMenuBarItem
+        NSApp.setActivationPolicy(regular ? .regular : .accessory)
+        if regular { NSApp.activate() }
+    }
+
+    /// Without a menu bar icon, closing the window is quitting: nothing would
+    /// be left to reach the app by, and it sends no notifications.
+    @MainActor func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !Self.showsMenuBarItem
+    }
+}
+
+/// The menu bar glyph. It follows the verdict by silhouette, so it reads in
+/// the menu bar's monochrome; dimmed while Backrest cannot be read.
+struct MenuLabel: View {
+    let model: AppModel
+
+    var body: some View {
+        let overview = model.overview
+        Image(systemName: overview?.menuSymbol ?? "clock.badge.questionmark")
+            .opacity(overview == nil ? 0.4 : 1)
+            .accessibilityLabel("MacRest: \(overview?.title ?? "Backrest is not answering")")
+    }
+}
+
+/// The menu bar panel: the verdict, what is running, and the three things one
+/// comes here for: back up now, restore something, open the window.
+struct MenuPanel: View {
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let o = model.overview {
+                HStack(spacing: 10) {
+                    Image(systemName: o.symbol)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Theme.tint(o.severity))
+                        .frame(width: 32, height: 32)
+                        .background(Theme.track, in: RoundedRectangle(cornerRadius: 9))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(o.title).font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.color(o.severity))
+                        Text(o.subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                DaysChart(overview: o)
+            } else {
+                Label(model.loadError ?? "Reading Backrest…", systemImage: "questionmark.circle")
+                    .foregroundStyle(.secondary)
+            }
+
+            if let run = model.runningBackup {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Backing up").font(.callout.weight(.medium))
+                        Spacer()
+                        if let pct = run.primary.backup?.percentDone { Text("\(Int(pct * 100))%").monospacedDigit() }
+                        Button("Stop") { Task { await model.cancel(run.primary) } }.controlSize(.small)
+                    }
+                    ProgressBar(value: run.primary.backup?.percentDone ?? 0)
+                }
+                .font(.callout)
+            }
+
+            if model.staleLock != nil {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: "lock.trianglebadge.exclamationmark").foregroundStyle(Theme.error)
+                    Text("A stale lock is blocking retention, prune and check.")
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Unlock") { Task { await model.repoTask(.unlock) } }.controlSize(.small)
+                }
+            } else if let o = model.overview, !o.failingMaintenance.isEmpty {
+                Label("\(o.failingMaintenance.joined(separator: ", ")) failed on its last run.", systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(Theme.warning)
+            }
+
+            HStack(spacing: 8) {
+                Button { Task { await model.backupNow() } } label: {
+                    Label("Back Up Now", systemImage: "arrow.clockwise.icloud").frame(maxWidth: .infinity)
+                }
+                .disabled(model.runningBackup != nil || model.starting || model.savedPlan == nil)
+                Button { open(.browse) } label: {
+                    Label("Restore…", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90").frame(maxWidth: .infinity)
+                }
+            }
+            .controlSize(.large)
+
+            Divider()
+            HStack {
+                Button("Open MacRest") { open(nil) }.buttonStyle(.plain).foregroundStyle(.tint)
+                Spacer()
+                Button("Quit") { NSApp.terminate(nil) }.buttonStyle(.plain).foregroundStyle(.secondary)
+            }
+            .font(.callout)
+        }
+        .padding(14)
+        .frame(width: 330)
+    }
+
+    private func open(_ pane: Pane?) {
+        if let pane { model.pane = pane }
+        NSApp.activate()
+        openWindow(id: MainWindow.id)
+    }
+}
