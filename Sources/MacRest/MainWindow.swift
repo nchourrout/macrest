@@ -915,8 +915,11 @@ struct RepositoryView: View {
                         Button("Unlock") { Task { await model.repoTask(.unlock) } }
                             .help("Remove stale locks left by a run that crashed or was cut off")
                     }
+                    Toggle("Clear stale locks automatically", isOn: repo.autoUnlock)
                 } header: {
                     Text("Maintenance")
+                } footer: {
+                    Text("A lock left by a crashed run blocks retention, prune and check until it is removed. Clearing it automatically is safe while this Mac is the repository's only user.")
                 }
                 .disabled(model.starting)
 

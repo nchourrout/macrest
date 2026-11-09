@@ -61,6 +61,7 @@ func roundTrip(_ v: JSONValue) throws -> JSONValue {
         plan.retention = .buckets(TimeBuckets(hourly: 24, daily: 30, weekly: 52, monthly: 24))
         plan.excludes.append("**/.venv")
         repo.checkMode = .readData(percent: 10)
+        repo.autoUnlock = true
         let out = try roundTrip(BackrestConfig.applied(plan, repo, to: c))
 
         let p = try #require(out["plans"]?.array?.first)
@@ -75,6 +76,7 @@ func roundTrip(_ v: JSONValue) throws -> JSONValue {
         #expect(r["guid"]?.string == "0cea")
         #expect(r["checkPolicy"]?["structureOnly"] == nil)
         #expect(r["checkPolicy"]?["readDataSubsetPercent"]?.number == 10)
+        #expect(r["autoUnlock"]?.bool == true)
         #expect(out["sync"] == c["sync"])
         #expect(out["auth"] == c["auth"])
         #expect(out["modno"] == c["modno"])

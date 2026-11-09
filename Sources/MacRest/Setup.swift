@@ -216,8 +216,19 @@ struct SetupView: View {
             try await model.setUp(.init(uri: uri, password: password, env: env, instance: instance,
                                         paths: [home], everyHours: everyHours, autoUnlock: autoUnlock))
         } catch {
-            self.error = error.localizedDescription
+            self.error = Self.explain(error.localizedDescription)
         }
+    }
+
+    /// Backrest tries `restic init` when it cannot open a repository, so a
+    /// wrong password on an existing one surfaces as "config file already
+    /// exists". Says what it means.
+    static func explain(_ message: String) -> String {
+        if message.contains("config file already exists") || message.contains("wrong password") {
+            return "That is not the password of the repository at this location."
+        }
+        if message.contains("host key") { return "This Mac does not trust the server's host key yet. Connect once with ssh in Terminal, then try again." }
+        return message
     }
 }
 

@@ -154,7 +154,9 @@ public enum SetupDefaults {
         .object([
             "id": .string(id), "uri": .string(uri), "password": .string(password),
             "env": .array(env.map(JSONValue.string)),
-            "autoInitialize": .bool(true), "autoUnlock": .bool(autoUnlock),
+            // No autoInitialize: AddRepo runs restic init itself and stamps the
+            // repo's guid, and Backrest rejects the two together.
+            "autoUnlock": .bool(autoUnlock),
             "prunePolicy": .object([
                 "schedule": .object(["maxFrequencyDays": .number(7), "clock": .string("CLOCK_LAST_RUN_TIME")]),
                 "maxUnusedPercent": .number(10),

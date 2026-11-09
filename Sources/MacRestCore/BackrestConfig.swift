@@ -153,6 +153,9 @@ public struct RepoSettings: Sendable, Equatable {
     public var checkMode: CheckMode
     public var pruneSchedule: ScheduleSetting
     public var pruneMaxUnusedPercent: Double
+    /// Backrest removes a stale lock before a run that needs one. Safe while
+    /// this Mac is the repository's only client.
+    public var autoUnlock = false
 
     public var problems: [String] {
         var p: [String] = []
@@ -181,7 +184,8 @@ public enum BackrestConfig {
             id: repoID, uri: repo["uri"]?.string ?? "",
             checkSchedule: ScheduleSetting(check?["schedule"]), checkMode: mode,
             pruneSchedule: ScheduleSetting(repo["prunePolicy"]?["schedule"]),
-            pruneMaxUnusedPercent: repo["prunePolicy"]?["maxUnusedPercent"]?.number ?? 0)
+            pruneMaxUnusedPercent: repo["prunePolicy"]?["maxUnusedPercent"]?.number ?? 0,
+            autoUnlock: repo["autoUnlock"]?.bool ?? false)
         return (settings, repoSettings)
     }
 
@@ -218,6 +222,7 @@ public enum BackrestConfig {
             prune["schedule"] = repo.pruneSchedule.json(keepingClock: prune["schedule"])
             prune["maxUnusedPercent"] = .number(repo.pruneMaxUnusedPercent)
             r["prunePolicy"] = prune
+            r["autoUnlock"] = repo.autoUnlock ? .bool(true) : nil
             repos[i] = r
             config["repos"] = .array(repos)
         }
