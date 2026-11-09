@@ -15,7 +15,7 @@ jobs:
     # SDK: no older runner image builds it.
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Toolchain
         run: swift --version
