@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # The workflows themselves, on a cheap Linux runner, so a broken workflow
+  # fails in seconds instead of after a macOS build.
+  lint-workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+          ./actionlint -color
+
+  build-and-test:
+    # The package targets macOS 26 with Swift 6.2, so it needs the macOS 26
+    # SDK: no older runner image builds it.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Toolchain
+        run: swift --version
+
+      # A warning is an error here: the code builds clean, and keeping it so
+      # is cheaper than finding out later which warning hid a bug.
+      - name: Build
+        run: swift build -Xswiftc -warnings-as-errors
+
+      # swift-testing's macro plugin occasionally fails to load on a cold
+      # .build ("plugin for module 'TestingMacros' not found") and loads on
+      # the next attempt, so a failed first run is retried once.
+      - name: Test
+        run: swift test || swift test
+
+      - name: Build the app bundle
+        run: ./build-app.sh "$RUNNER_TEMP/MacRest.app"
+
+      - name: Package
+        run: ./package.sh "$RUNNER_TEMP/MacRest.app" "${GITHUB_SHA::7}" "$RUNNER_TEMP/dist"
+
+      # Every green build of main or a pull request can be downloaded and
+      # tried without cutting a release.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MacRest-${{ github.sha }}
+          path: ${{ runner.temp }}/dist/*
+          retention-days: 14
