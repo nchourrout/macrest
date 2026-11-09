@@ -48,10 +48,10 @@ struct BrowseView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Button { step(older: true) } label: { Image(systemName: "chevron.backward") }
-                    .help("Older snapshot")
+                    .help("Older backup")
                     .disabled(index.map { $0 >= model.snapshots.count - 1 } ?? true)
                 Button { step(older: false) } label: { Image(systemName: "chevron.forward") }
-                    .help("Newer snapshot")
+                    .help("Newer backup")
                     .disabled(index.map { $0 == 0 } ?? true)
                 if let s = model.selectedSnapshot {
                     Text(s.time.activityLabel).font(.headline)
@@ -92,7 +92,7 @@ struct BrowseView: View {
     @ViewBuilder private var files: some View {
         if let error = model.browseError {
             ContentUnavailableView {
-                Label(model.selectedSnapshot == nil ? "Could not list the snapshots" : "Could not read this folder",
+                Label(model.selectedSnapshot == nil ? "Could not list the backups" : "Could not read this folder",
                       systemImage: "exclamationmark.triangle")
             } description: {
                 Text(error)
@@ -103,14 +103,14 @@ struct BrowseView: View {
             // The first listing reads every snapshot from the storage: seconds
             // to tens of seconds over the network. Say so rather than show an
             // empty table and a stray spinner.
-            Loading(title: "Reading snapshots…",
+            Loading(title: "Reading backups…",
                     detail: "Listing what is stored on \(model.storageName). The first time takes a moment.")
         } else if model.entriesLoading && model.entries.isEmpty {
             Loading(title: "Opening \((model.folder.map { ($0 as NSString).lastPathComponent }) ?? "folder")…",
-                    detail: "Reading it from the snapshot of \(model.selectedSnapshot?.time.activityLabel ?? "")")
+                    detail: "Reading it from the backup of \(model.selectedSnapshot?.time.activityLabel ?? "")")
         } else if model.folderMissing {
-            ContentUnavailableView("Not in this snapshot", systemImage: "folder.badge.questionmark",
-                                   description: Text("This folder did not exist yet, or was excluded, at \(model.selectedSnapshot?.time.activityLabel ?? "that time"). Pick a newer snapshot."))
+            ContentUnavailableView("Not in this backup", systemImage: "folder.badge.questionmark",
+                                   description: Text("This folder did not exist yet, or was excluded, at \(model.selectedSnapshot?.time.activityLabel ?? "that time"). Pick a newer backup."))
         } else {
             Table(shown, selection: $selection) {
                 TableColumn("Name") { e in
@@ -223,7 +223,7 @@ struct SnapshotTimeline: View {
         }
         .overlay {
             if snapshots.isEmpty {
-                if loading { ProgressView().controlSize(.small) } else { ContentUnavailableView("No snapshots", systemImage: "clock") }
+                if loading { ProgressView().controlSize(.small) } else { ContentUnavailableView("No backups yet", systemImage: "clock") }
             }
         }
     }

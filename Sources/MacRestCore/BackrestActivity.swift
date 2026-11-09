@@ -11,13 +11,13 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
         public var title: String {
             switch self {
             case .backup: "Backup"
-            case .forget: "Retention"
-            case .prune: "Prune"
-            case .check: "Check"
-            case .indexSnapshot: "Index snapshot"
+            case .forget: "Cleanup"
+            case .prune: "Space recovery"
+            case .check: "Verification"
+            case .indexSnapshot: "Indexing"
             case .restore: "Restore"
-            case .stats: "Stats"
-            case .hook: "Hook"
+            case .stats: "Size check"
+            case .hook: "Script"
             case .command: "Command"
             case .unknown: "Operation"
             }
@@ -58,7 +58,7 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
         public var errors = 0
     }
 
-    public struct Stats: Sendable, Equatable {
+    public struct Stats: Sendable, Equatable, Codable {
         public var totalSize: Int64?
         public var uncompressedSize: Int64?
         public var snapshotCount: Int64?

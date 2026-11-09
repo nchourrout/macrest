@@ -80,7 +80,7 @@ final class AppModel {
         loop = Task { [weak self] in
             await self?.reload()
             while !Task.isCancelled, let self {
-                let interval: Duration = runningAnything || starting ? .seconds(2) : windowVisible ? .seconds(15) : .seconds(60)
+                let interval: Duration = runningAnything || starting || measuring ? .seconds(2) : windowVisible ? .seconds(15) : .seconds(60)
                 let nap = Task<Void, Never> { _ = try? await Task.sleep(for: interval) }
                 sleeper = nap
                 await nap.value
@@ -111,7 +111,13 @@ final class AppModel {
             let grouped = Activity.flows(ops, now: now)
             flows = grouped.flows
             scheduled = grouped.scheduled
-            stats = Activity.latestStats(ops)
+            if let latest = Activity.latestStats(ops) {
+                stats = latest
+                rememberStats(latest)
+            } else if stats == nil {
+                stats = rememberedStats()
+            }
+            if let since = measuringSince, let at = stats?.1, at >= since { measuringSince = nil }
             overview = Overview.make(flows: flows, scheduled: scheduled, now: now, unlockedAt: unlockedAt)
             if runningAnything { sentAt = nil }
             if loadError != nil, config != nil { loadError = nil }
@@ -239,6 +245,39 @@ final class AppModel {
 
     func dismissError() { actionError = nil }
 
+    // MARK: Size
+
+    /// When Measure was clicked, until its result arrives (or 3 minutes).
+    private var measuringSince: Date?
+    var measuring: Bool { measuringSince.map { Date().timeIntervalSince($0) < 180 } ?? false }
+
+    func measure() async {
+        measuringSince = Date()
+        await repoTask(.stats)
+        if actionError != nil { measuringSince = nil }
+    }
+
+    /// The last measurement, kept across launches: a size check is rare, so
+    /// it falls out of the fetched log within days.
+    private struct RememberedStats: Codable {
+        var uri: String
+        var stats: BackrestOperation.Stats
+        var at: Date
+    }
+
+    private func rememberStats(_ s: (BackrestOperation.Stats, Date)) {
+        guard let uri = savedRepo?.uri,
+              let data = try? JSONEncoder().encode(RememberedStats(uri: uri, stats: s.0, at: s.1)) else { return }
+        UserDefaults.standard.set(data, forKey: "lastStats")
+    }
+
+    private func rememberedStats() -> (BackrestOperation.Stats, Date)? {
+        guard let data = UserDefaults.standard.data(forKey: "lastStats"),
+              let r = try? JSONDecoder().decode(RememberedStats.self, from: data),
+              r.uri == savedRepo?.uri else { return nil }
+        return (r.stats, r.at)
+    }
+
     /// When Unlock last succeeded, kept across launches.
     private(set) var unlockedAt: Date? = UserDefaults.standard.object(forKey: "unlockedAt") as? Date
     /// A confirmation to show once, then dismiss.
@@ -253,7 +292,7 @@ final class AppModel {
         UserDefaults.standard.set(unlockedAt, forKey: "unlockedAt")
         await refreshActivity()
         let next = scheduled.first { $0.kind == .backup }?.start
-        notice = "Unlocked. Retention, prune and check can run again; retention next runs after the backup"
+        notice = "Unlocked. Cleanup, space recovery and verification can run again; cleanup next runs after the backup"
             + (next.map { " at \($0.activityLabel)" } ?? "") + "."
     }
 

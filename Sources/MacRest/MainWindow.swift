@@ -100,8 +100,8 @@ struct MainWindow: View {
             Menu {
                 Button("Refresh") { Task { await model.reload() } }
                 Divider()
-                Button("Restart Backrest") { Task { await EngineService.shared.restart(); await model.reload() } }
-                Button("Open Backrest in the Browser") { NSWorkspace.shared.open(URL(string: Links.backrestURL)!) }
+                Button("Restart Backup Engine") { Task { await EngineService.shared.restart(); await model.reload() } }
+                Button("Open Backrest Web Interface") { NSWorkspace.shared.open(URL(string: Links.backrestURL)!) }
                 Divider()
                 Toggle("Open at Login", isOn: Binding(get: { AppDelegate.opensAtLogin },
                                                       set: { AppDelegate.opensAtLogin = $0 }))

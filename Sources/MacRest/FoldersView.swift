@@ -50,7 +50,7 @@ struct FoldersView: View {
                             .frame(width: 180)
                     }
                 } footer: {
-                    Text("restic glob patterns. A pattern starting with / is a path; **/name matches that name at any depth. Folders tagged with CACHEDIR.TAG are skipped too.")
+                    Text("Patterns: a pattern starting with / is a path; **/name matches that name at any depth. Folders tagged with CACHEDIR.TAG are skipped too.")
                 }
             }
             .formStyle(.grouped)

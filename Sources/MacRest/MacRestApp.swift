@@ -110,7 +110,7 @@ struct MenuLabel: View {
         let overview = model.overview
         Image(systemName: overview?.menuSymbol ?? "clock.badge.questionmark")
             .opacity(overview == nil ? 0.4 : 1)
-            .accessibilityLabel("MacRest: \(overview?.title ?? "Backrest is not answering")")
+            .accessibilityLabel("MacRest: \(overview?.title ?? "the backup engine is not answering")")
     }
 }
 
@@ -140,7 +140,7 @@ struct MenuPanel: View {
                 Label("Backups are not set up yet.", systemImage: "externaldrive.badge.plus")
                 Button("Set Up Backups…") { open(.activity) }.controlSize(.large)
             } else {
-                Label(engineText ?? model.loadError ?? "Reading Backrest…", systemImage: "questionmark.circle")
+                Label(engineText ?? model.loadError ?? "Connecting to the backup engine…", systemImage: "questionmark.circle")
                     .foregroundStyle(.secondary)
             }
 
@@ -160,7 +160,7 @@ struct MenuPanel: View {
             if model.staleLock != nil {
                 HStack(alignment: .firstTextBaseline) {
                     Image(systemName: "lock.trianglebadge.exclamationmark").foregroundStyle(Theme.error)
-                    Text("A stale lock is blocking retention, prune and check.")
+                    Text("A leftover lock is stopping old backups from being removed.")
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)

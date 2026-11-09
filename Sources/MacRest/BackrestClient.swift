@@ -23,11 +23,11 @@ enum BackrestClient {
             // Snapshot listings read the storage over the network, and Backrest
             // runs one restic command per repository at a time, so a listing can
             // wait behind a backup or another listing.
-            throw Failure(message: "Backrest took too long to answer. It reads the storage over the network and may be busy with another task.", isTimeout: true)
+            throw Failure(message: "The backup engine took too long to answer. It reads the storage over the network and may be busy with another task.", isTimeout: true)
         } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
         } catch {
-            throw Failure(message: "Backrest is not running. MacRest restarts it on its own; if this stays, use Restart Backrest in the … menu.")
+            throw Failure(message: "The backup engine (Backrest) is not running. MacRest restarts it on its own; if this stays, use Restart Backup Engine in the … menu.")
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {

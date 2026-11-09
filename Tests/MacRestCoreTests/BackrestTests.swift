@@ -98,7 +98,7 @@ func roundTrip(_ v: JSONValue) throws -> JSONValue {
     @Test func retentionSummary() {
         #expect(RetentionSetting.buckets(TimeBuckets(daily: 7, weekly: 4, monthly: 3)).summary == "Keeps about 3 months of history")
         #expect(RetentionSetting.buckets(TimeBuckets(hourly: 24, monthly: 24)).summary == "Keeps about 2 years of history")
-        #expect(RetentionSetting.lastN(1).summary == "Keeps the last 1 snapshot")
+        #expect(RetentionSetting.lastN(1).summary == "Keeps the last 1 backup")
     }
 }
 

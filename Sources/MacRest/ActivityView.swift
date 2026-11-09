@@ -129,13 +129,13 @@ struct StaleLockRow: View {
                 .font(.title2)
                 .foregroundStyle(Theme.error)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Old snapshots are not being removed")
+                Text("Old backups are not being removed")
                     .font(.headline)
-                Text("Retention failed after \(all ? "every backup in the log (\(count))" : "the last \(Format.plural(count, "backup"))"): a lock left behind by an earlier run. Backups still run, but the storage keeps growing.")
+                Text("Cleanup failed after \(all ? "every backup in the log (\(count))" : "the last \(Format.plural(count, "backup"))"): a lock left behind by an earlier run. Backups still run, but the storage keeps growing.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Unlock removes only locks restic can tell are stale.")
+                Text("Unlock removes only locks that are provably left over, never one in use.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -233,7 +233,7 @@ struct FlowRow: View {
             if expanded {
                 VStack(alignment: .leading, spacing: 4) {
                     if let id = op.snapshotID {
-                        LabeledContent("Snapshot") {
+                        LabeledContent("Backup ID") {
                             Text(String(id.prefix(8))).font(.callout.monospaced()).textSelection(.enabled)
                         }
                     }
@@ -281,7 +281,7 @@ struct FlowRow: View {
     }
 }
 
-/// A small capsule naming a state: "Failed", "Retention failed".
+/// A small capsule naming a state: "Failed", "Cleanup failed".
 struct Tag: View {
     let text: String
     let severity: Severity

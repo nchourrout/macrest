@@ -38,8 +38,8 @@ let utc: Calendar = {
         let o = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 2),
                               op(2, "operationForget", "STATUS_ERROR", hoursAgo: 2, flow: 1, message: "locked")])
         #expect(o.severity == .warning)
-        #expect(o.title == "Retention is failing")
-        #expect(o.failingMaintenance == ["Retention"])
+        #expect(o.title == "Cleanup is failing")
+        #expect(o.failingMaintenance == ["Cleanup"])
 
         // After an unlock, that failure no longer counts.
         let decoded = try Activity.decode(Data(#"{"operations":[\#(op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 2)),\#(op(2, "operationForget", "STATUS_ERROR", hoursAgo: 2, flow: 1, message: "locked"))]}"#.utf8))

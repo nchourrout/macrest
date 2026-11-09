@@ -69,7 +69,7 @@ public struct TimeBuckets: Sendable, Equatable, Hashable {
         if weekly > 0 { return Format.plural(weekly, "week") }
         if daily > 0 { return Format.plural(daily, "day") }
         if hourly > 0 { return Format.plural(hourly, "hour") }
-        return keepLastN > 0 ? "the last \(Format.plural(keepLastN, "snapshot"))" : "nothing"
+        return keepLastN > 0 ? "the last \(Format.plural(keepLastN, "backup"))" : "nothing"
     }
 }
 
@@ -103,8 +103,8 @@ public enum RetentionSetting: Sendable, Equatable, Hashable {
 
     public var summary: String {
         switch self {
-        case .keepAll: "Keeps every snapshot"
-        case let .lastN(n): "Keeps the last \(Format.plural(n, "snapshot"))"
+        case .keepAll: "Keeps every backup"
+        case let .lastN(n): "Keeps the last \(Format.plural(n, "backup"))"
         case let .buckets(b): "Keeps about \(b.horizon) of history"
         }
     }
@@ -137,8 +137,8 @@ public struct PlanSettings: Sendable, Equatable {
         default: break
         }
         switch retention {
-        case let .lastN(n) where n < 1: p.append("Keep at least one snapshot.")
-        case let .buckets(b) where b == TimeBuckets(): p.append("Retention keeps nothing: set at least one count.")
+        case let .lastN(n) where n < 1: p.append("Keep at least one backup.")
+        case let .buckets(b) where b == TimeBuckets(): p.append("This keeps nothing: set at least one count.")
         default: break
         }
         return p
@@ -163,7 +163,7 @@ public struct RepoSettings: Sendable, Equatable {
     public var problems: [String] {
         var p: [String] = []
         if case let .readData(pct) = checkMode, !(pct > 0 && pct <= 100) { p.append("The share of data to read is between 1 and 100%.") }
-        if !(pruneMaxUnusedPercent >= 0 && pruneMaxUnusedPercent <= 100) { p.append("Unused space before a prune is between 0 and 100%.") }
+        if !(pruneMaxUnusedPercent >= 0 && pruneMaxUnusedPercent <= 100) { p.append("Unused space allowed is between 0 and 100%.") }
         return p
     }
 }

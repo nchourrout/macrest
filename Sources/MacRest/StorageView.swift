@@ -97,50 +97,53 @@ struct StorageView: View {
                     }
                     LabeledContent("Stored") {
                         HStack(spacing: 8) {
-                            if let stats = model.stats?.0, let at = model.stats?.1, let size = stats.totalSize {
+                            if model.measuring {
+                                ProgressView().controlSize(.small)
+                                Text("Measuring… this reads the storage and can take a minute").foregroundStyle(.secondary)
+                            } else if let stats = model.stats?.0, let at = model.stats?.1, let size = stats.totalSize {
                                 Text(storedText(stats, size: size)).monospacedDigit()
                                 Text("· measured \(Format.ago(Int(Date().timeIntervalSince(at))))").foregroundStyle(.secondary)
                             } else {
                                 Text("Not measured yet").foregroundStyle(.secondary)
                             }
-                            Button("Measure") { Task { await model.repoTask(.stats) } }
+                            Button("Measure") { Task { await model.measure() } }
                                 .controlSize(.small)
-                                .disabled(model.starting)
+                                .disabled(model.starting || model.measuring)
                         }
                     }
                 }
 
                 SwiftUI.Section {
-                    MaintenanceRow(title: "Retention", symbol: "calendar.badge.minus",
+                    MaintenanceRow(title: "Cleanup", symbol: "calendar.badge.minus",
                                    last: Activity.lastFinished(.forget, in: model.flows), next: nil,
-                                   note: "Runs after every backup", unlockedAt: model.unlockedAt)
-                    MaintenanceRow(title: "Check", symbol: "checkmark.shield",
+                                   note: "Removes backups past their keep period, after every backup", unlockedAt: model.unlockedAt)
+                    MaintenanceRow(title: "Verification", symbol: "checkmark.shield",
                                    last: Activity.lastFinished(.check, in: model.flows),
                                    next: model.scheduled.first { $0.kind == .check }?.start, unlockedAt: model.unlockedAt) {
-                        Button("Check Now") { Task { await model.repoTask(.check) } }
+                        Button("Verify Now") { Task { await model.repoTask(.check) } }
                     }
-                    MaintenanceRow(title: "Prune", symbol: "scissors",
+                    MaintenanceRow(title: "Space recovery", symbol: "scissors",
                                    last: Activity.lastFinished(.prune, in: model.flows),
                                    next: model.scheduled.first { $0.kind == .prune }?.start, unlockedAt: model.unlockedAt) {
-                        Button("Prune Now…") { confirmPrune = true }
+                        Button("Free Up Space…") { confirmPrune = true }
                     }
                     MaintenanceRow(title: "Locks", symbol: model.staleLock == nil ? "lock.open" : "lock.trianglebadge.exclamationmark",
                                    last: nil, next: nil,
-                                   note: model.staleLock == nil ? "No stale lock reported" : "A stale lock is blocking retention and prune",
+                                   note: model.staleLock == nil ? "No leftover lock" : "A leftover lock is blocking cleanup and space recovery",
                                    noteSeverity: model.staleLock == nil ? .ok : .error) {
                         Button("Unlock") { Task { await model.unlock() } }
-                            .help("Remove stale locks left by a run that crashed or was cut off")
+                            .help("Remove locks left behind by a run that crashed or was cut off")
                     }
-                    Toggle("Clear stale locks automatically", isOn: repo.autoUnlock)
+                    Toggle("Clear leftover locks automatically", isOn: repo.autoUnlock)
                 } header: {
                     Text("Maintenance")
                 } footer: {
-                    Text("A lock left by a crashed run blocks retention, prune and check until it is removed. Clearing it automatically is safe while this Mac is the only one backing up to this storage.")
+                    Text("A lock left behind by a crashed run blocks cleanup, space recovery and verification until it is removed. Clearing it automatically is safe while this Mac is the only one backing up to this storage.")
                 }
                 .disabled(model.starting)
 
                 SwiftUI.Section {
-                    ScheduleEditor(title: "Check", schedule: repo.checkSchedule, allowsHours: false)
+                    ScheduleEditor(title: "Verify", schedule: repo.checkSchedule, allowsHours: false)
                     Picker("Depth", selection: checkDepth(repo)) {
                         Text("Structure only").tag(false)
                         Text("Read back a sample of the data").tag(true)
@@ -151,28 +154,28 @@ struct StorageView: View {
                         }
                     }
                 } header: {
-                    Text("Integrity check")
+                    Text("Verification")
                 } footer: {
-                    Text("A structure check never reads the backed-up data, so a damaged pack only shows when you restore it. Reading a sample covers a different part each time.")
+                    Text("Checking the structure is quick but never reads the backed-up files, so damaged data only shows when you restore it. Reading a sample covers a different part each time.")
                 }
 
                 SwiftUI.Section {
-                    ScheduleEditor(title: "Prune", schedule: repo.pruneSchedule, allowsHours: false)
+                    ScheduleEditor(title: "Free up space", schedule: repo.pruneSchedule, allowsHours: false)
                     ValueStepper(label: "Unused space allowed", value: Int(repo.wrappedValue.pruneMaxUnusedPercent),
                                  text: "\(Int(repo.wrappedValue.pruneMaxUnusedPercent))%", range: 0...100, step: 5) {
                         repo.wrappedValue.pruneMaxUnusedPercent = Double($0)
                     }
                 } header: {
-                    Text("Prune")
+                    Text("Space recovery")
                 } footer: {
-                    Text("Retention only marks old snapshots as gone; prune is what frees their space on the server.")
+                    Text("Cleanup removes old backups from the list, but their data stays until space recovery deletes what no backup uses any more. Allowing some unused space makes it run less often.")
                 }
             }
             .formStyle(.grouped)
-            .confirmationDialog("Prune the storage now?", isPresented: $confirmPrune) {
-                Button("Prune") { Task { await model.repoTask(.prune) } }
+            .confirmationDialog("Free up space now?", isPresented: $confirmPrune) {
+                Button("Free Up Space") { Task { await model.repoTask(.prune) } }
             } message: {
-                Text("Prune rewrites packs on the server and holds an exclusive lock: backups wait until it finishes, which can take a while when there is a lot stored.")
+                Text("This rewrites data on the storage and locks it while it runs: backups wait until it finishes, which can take a while when there is a lot stored.")
             }
         }
     }

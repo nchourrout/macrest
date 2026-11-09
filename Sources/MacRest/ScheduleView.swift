@@ -6,7 +6,7 @@ struct ScheduleView: View {
     @Bindable var model: AppModel
 
     enum RetentionKind: String, CaseIterable, Identifiable {
-        case buckets = "By age", lastN = "Last N snapshots", all = "Everything"
+        case buckets = "By age", lastN = "The latest backups", all = "Everything"
         var id: String { rawValue }
     }
 
@@ -15,7 +15,7 @@ struct ScheduleView: View {
             Form {
                 SwiftUI.Section {
                     ScheduleEditor(title: "Back up", schedule: plan.schedule)
-                    Toggle("Skip the snapshot when nothing changed", isOn: plan.skipIfUnchanged)
+                    Toggle("Skip the backup when nothing changed", isOn: plan.skipIfUnchanged)
                 } header: {
                     Text("Backups")
                 } footer: {
@@ -31,7 +31,7 @@ struct ScheduleView: View {
                     retentionFields(plan)
                 } header: {
                     HStack {
-                        Text("Snapshots to keep")
+                        Text("Backups to keep")
                         Spacer()
                         Button("Time Machine style") {
                             plan.wrappedValue.retention = .buckets(TimeBuckets(hourly: 24, daily: 30, weekly: 52, monthly: 24))
@@ -40,7 +40,7 @@ struct ScheduleView: View {
                         .help("Hourly for a day, daily for a month, weekly for a year, monthly for two years")
                     }
                 } footer: {
-                    Text(plan.wrappedValue.retention.summary + ". Applied after each backup; the space is freed by the next prune.")
+                    Text(plan.wrappedValue.retention.summary + ". Older backups are removed after each backup; their space is recovered on the space recovery schedule (Storage).")
                 }
             }
             .formStyle(.grouped)
@@ -72,9 +72,9 @@ struct ScheduleView: View {
             CountStepper(label: "Weekly", unit: "week", value: b.weekly) { var c = b; c.weekly = $0; set(c) }
             CountStepper(label: "Monthly", unit: "month", value: b.monthly) { var c = b; c.monthly = $0; set(c) }
             CountStepper(label: "Yearly", unit: "year", value: b.yearly) { var c = b; c.yearly = $0; set(c) }
-            CountStepper(label: "Always keep the latest", unit: "snapshot", value: b.keepLastN) { var c = b; c.keepLastN = $0; set(c) }
+            CountStepper(label: "Always keep the latest", unit: "backup", value: b.keepLastN) { var c = b; c.keepLastN = $0; set(c) }
         case let .lastN(n):
-            CountStepper(label: "Snapshots", unit: "snapshot", value: n, range: 1...10_000) {
+            CountStepper(label: "Backups", unit: "backup", value: n, range: 1...10_000) {
                 plan.wrappedValue.retention = .lastN($0)
             }
         case .keepAll:

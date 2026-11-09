@@ -12,17 +12,17 @@ struct EngineGate: View {
     var body: some View {
         switch engine.state {
         case .checking:
-            ProgressView("Looking for Backrest…").controlSize(.small)
+            ProgressView("Starting the backup engine…").controlSize(.small)
         case let .installing(step):
             VStack(spacing: 12) {
                 ProgressView().controlSize(.small)
                 Text(step)
-                Text("MacRest runs Backrest, the restic engine, as its own background service.")
+                Text("MacRest runs Backrest, the backup engine built on restic, as its own background service.")
                     .font(.callout).foregroundStyle(.secondary)
             }
         case let .failed(message):
             ContentUnavailableView {
-                Label("Backrest is not running", systemImage: "exclamationmark.triangle")
+                Label("The backup engine is not running", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(message)
             } actions: {
@@ -105,12 +105,12 @@ struct SetupView: View {
                     Text("Every 4 hours").tag(4)
                 }
                 LabeledContent("Keep") { Text("Hourly for a day, daily for a month, weekly for a year, monthly for two") }
-                Toggle("Clear stale locks automatically", isOn: $autoUnlock)
+                Toggle("Clear leftover locks automatically", isOn: $autoUnlock)
             } header: {
                 Text("What and when")
             } footer: {
-                Text((instanceIsSet ? "" : "The name tags every snapshot. To continue another Mac's history in existing backups, use that Mac's name. ")
-                     + "Stale locks from a crashed run otherwise stop old snapshots from being removed; clearing them is safe while this Mac is the only one backing up there. Everything here can be changed later.")
+                Text((instanceIsSet ? "" : "The name labels every backup. To continue another Mac's history in existing backups, use that Mac's name. ")
+                     + "A lock left behind by a crashed run otherwise stops old backups from being removed; clearing them is safe while this Mac is the only one backing up there. Everything here can be changed later.")
             }
 
             SwiftUI.Section {
@@ -366,7 +366,7 @@ struct StorageFields: View {
         TextField("Region", text: $form.region, prompt: Text("optional, e.g. eu-west-1, or auto for R2"))
         TextField("Access key ID", text: $form.accessKey)
         SecureField("Secret access key", text: $form.secretKey)
-        Text("Use a key limited to this bucket. It is kept in Backrest's configuration on this Mac, readable by your account only.")
+        Text("Use a key limited to this bucket. It is kept in the backup engine's configuration on this Mac, readable by your account only.")
             .font(.caption).foregroundStyle(.secondary)
     }
 
