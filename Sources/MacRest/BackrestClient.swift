@@ -6,6 +6,7 @@ import MacRestCore
 enum BackrestClient {
     struct Failure: LocalizedError {
         var message: String
+        var isTimeout = false
         var errorDescription: String? { message }
     }
 
@@ -18,8 +19,15 @@ enum BackrestClient {
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await URLSession.shared.data(for: request)
+        } catch let error as URLError where error.code == .timedOut {
+            // Snapshot listings read the storage over the network, and Backrest
+            // runs one restic command per repository at a time, so a listing can
+            // wait behind a backup or another listing.
+            throw Failure(message: "Backrest took too long to answer. It reads the storage over the network and may be busy with another task.", isTimeout: true)
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
         } catch {
-            throw Failure(message: "Backrest is not answering. Start it with: brew services start backrest")
+            throw Failure(message: "Backrest is not running. MacRest restarts it on its own; if this stays, use Restart Backrest in the … menu.")
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
@@ -77,12 +85,12 @@ enum BackrestClient {
 
 extension BackrestClient {
     static func snapshots(repo: String, plan: String) async throws -> [ResticSnapshot] {
-        try Snapshots.decode(try await call("ListSnapshots", JSONValue.object(["repoId": .string(repo), "planId": .string(plan)]), timeout: 60))
+        try Snapshots.decode(try await call("ListSnapshots", JSONValue.object(["repoId": .string(repo), "planId": .string(plan)]), timeout: 180))
     }
 
     static func files(repo: String, snapshot: String, path: String) async throws -> [SnapshotEntry] {
         let body = JSONValue.object(["repoId": .string(repo), "snapshotId": .string(snapshot), "path": .string(path)])
-        return try Snapshots.decodeEntries(try await call("ListSnapshotFiles", body, timeout: 60), folder: path)
+        return try Snapshots.decodeEntries(try await call("ListSnapshotFiles", body, timeout: 180), folder: path)
     }
 
     /// Backrest restores `path` from the snapshot into `target`, which must

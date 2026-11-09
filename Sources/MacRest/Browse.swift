@@ -21,16 +21,19 @@ struct BrowseView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                header
-                Divider()
-                files
+                if model.selectedSnapshot != nil {
+                    header
+                    Divider()
+                }
+                files.frame(maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
                 footer
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
             timeline.frame(width: 250)
         }
-        .task { await model.loadSnapshots() }
+        .task(id: model.savedPlan?.id) { await model.loadSnapshots() }
         .sheet(item: $restoring) { entry in
             RestoreSheet(entry: entry, snapshot: model.selectedSnapshot) { target in
                 lastTarget = target
@@ -55,7 +58,6 @@ struct BrowseView: View {
                     Text(Format.ago(Int(Date().timeIntervalSince(s.time)))).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if model.entriesLoading || model.snapshotsLoading { ProgressView().controlSize(.small) }
                 Toggle("Hidden Files", isOn: $showsHidden).toggleStyle(.checkbox).font(.callout)
             }
             ScrollView(.horizontal, showsIndicators: false) {
@@ -89,7 +91,23 @@ struct BrowseView: View {
 
     @ViewBuilder private var files: some View {
         if let error = model.browseError {
-            ContentUnavailableView("Could not read the snapshot", systemImage: "exclamationmark.triangle", description: Text(error))
+            ContentUnavailableView {
+                Label(model.selectedSnapshot == nil ? "Could not list the snapshots" : "Could not read this folder",
+                      systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("Try Again") { model.retryBrowse() }
+            }
+        } else if model.selectedSnapshot == nil {
+            // The first listing reads every snapshot from the storage: seconds
+            // to tens of seconds over the network. Say so rather than show an
+            // empty table and a stray spinner.
+            Loading(title: "Reading snapshots…",
+                    detail: "Listing what is stored on \(model.storageName). The first time takes a moment.")
+        } else if model.entriesLoading && model.entries.isEmpty {
+            Loading(title: "Opening \((model.folder.map { ($0 as NSString).lastPathComponent }) ?? "folder")…",
+                    detail: "Reading it from the snapshot of \(model.selectedSnapshot?.time.activityLabel ?? "")")
         } else if model.folderMissing {
             ContentUnavailableView("Not in this snapshot", systemImage: "folder.badge.questionmark",
                                    description: Text("This folder did not exist yet, or was excluded, at \(model.selectedSnapshot?.time.activityLabel ?? "that time"). Pick a newer snapshot."))
@@ -148,7 +166,10 @@ struct BrowseView: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            if let target = lastTarget {
+            if model.entriesLoading && !model.entries.isEmpty {
+                ProgressView().controlSize(.small)
+                Text("Opening…").foregroundStyle(.secondary)
+            } else if let target = lastTarget {
                 RestoreStatus(target: target, flows: model.flows)
             } else {
                 Text("Double-click a folder to open it. Select a file or folder, then Restore….").foregroundStyle(.secondary)
@@ -204,7 +225,9 @@ struct SnapshotTimeline: View {
             }
         }
         .overlay {
-            if snapshots.isEmpty, !loading { ContentUnavailableView("No snapshots", systemImage: "clock") }
+            if snapshots.isEmpty {
+                if loading { ProgressView().controlSize(.small) } else { ContentUnavailableView("No snapshots", systemImage: "clock") }
+            }
         }
     }
 
@@ -317,5 +340,21 @@ struct RestoreStatus: View {
                 Text("Restoring \((target as NSString).lastPathComponent)…").lineLimit(1).truncationMode(.middle)
             }
         }
+    }
+}
+
+/// A centred wait with a line saying what is being waited on.
+struct Loading: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ProgressView().controlSize(.regular)
+            Text(title).font(.headline)
+            Text(detail).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

@@ -292,6 +292,22 @@ final class AppModel {
     @ObservationIgnored private var listings: [String: [SnapshotEntry]] = [:]
     @ObservationIgnored private var listingTask: Task<Void, Never>?
 
+    /// The storage's host or folder name, for messages: "homeserver".
+    var storageName: String {
+        let uri = savedRepo?.uri ?? ""
+        if uri.hasPrefix("sftp:") { return uri.dropFirst(5).split(separator: ":").first.map(String.init) ?? "the storage" }
+        return uri.isEmpty ? "the storage" : (uri as NSString).lastPathComponent
+    }
+
+    func retryBrowse() {
+        browseError = nil
+        if snapshots.isEmpty || selectedSnapshot == nil {
+            Task { await loadSnapshots(force: true) }
+        } else {
+            open(folder ?? snapshotRoot)
+        }
+    }
+
     var snapshotRoot: String { selectedSnapshot?.paths.first ?? savedPlan?.paths.first ?? "/" }
 
     func loadSnapshots(force: Bool = false) async {
@@ -334,6 +350,8 @@ final class AppModel {
                 entries = list
                 folderMissing = false
                 browseError = nil
+            } catch is CancellationError {
+                return
             } catch {
                 guard !Task.isCancelled else { return }
                 entries = []
