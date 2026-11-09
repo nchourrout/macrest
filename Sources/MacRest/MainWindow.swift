@@ -43,6 +43,9 @@ struct MainWindow: View {
                 Task { await EngineService.shared.takeOver(); await model.reload() }
             }
         }
+        if let notice = model.notice {
+            Banner(text: notice, severity: .ok, dismiss: { model.dismissNotice() })
+        }
         if let error = model.actionError ?? model.loadError {
             Banner(text: error, severity: .error, dismiss: model.actionError != nil ? { model.dismissError() } : nil)
         }
@@ -120,8 +123,8 @@ struct Banner: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.color(severity))
+            Image(systemName: severity == .error ? "xmark.octagon.fill" : severity == .ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(severity == .ok ? Color.accentColor : Theme.color(severity))
             Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             if let dismiss {
                 Button(action: dismiss) { Image(systemName: "xmark") }.buttonStyle(.borderless)
@@ -130,7 +133,7 @@ struct Banner: View {
         .font(.callout)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Theme.color(severity).opacity(0.12))
+        .background((severity == .ok ? Color.accentColor : Theme.color(severity)).opacity(0.12))
     }
 }
 
@@ -312,7 +315,7 @@ struct ActivityView: View {
             }
             if let lock = model.staleLock {
                 SwiftUI.Section {
-                    StaleLockRow(count: lock.count, all: lock.all, reason: lock.reason) { Task { await model.repoTask(.unlock) } }
+                    StaleLockRow(count: lock.count, all: lock.all, reason: lock.reason) { Task { await model.unlock() } }
                 }
             }
             if let run = model.runningBackup {
@@ -912,7 +915,7 @@ struct RepositoryView: View {
                                    last: nil, next: nil,
                                    note: model.staleLock == nil ? "No stale lock reported" : "A stale lock is blocking retention and prune",
                                    noteSeverity: model.staleLock == nil ? .ok : .error) {
-                        Button("Unlock") { Task { await model.repoTask(.unlock) } }
+                        Button("Unlock") { Task { await model.unlock() } }
                             .help("Remove stale locks left by a run that crashed or was cut off")
                     }
                     Toggle("Clear stale locks automatically", isOn: repo.autoUnlock)

@@ -40,8 +40,10 @@ public struct Overview: Sendable, Equatable {
         return s
     }
 
+    /// `unlockedAt`: maintenance failures from before the last unlock no
+    /// longer count; the lock they hit is gone.
     public static func make(flows: [ActivityFlow], scheduled: [BackrestOperation], now: Date,
-                            calendar: Calendar = .current) -> Overview {
+                            unlockedAt: Date? = nil, calendar: Calendar = .current) -> Overview {
         let backups = flows.map(\.primary).filter { $0.kind == .backup }.sorted { $0.id > $1.id }
         let finished = backups.filter { $0.outcome != .running && $0.outcome != .pending }
         let running = backups.contains { $0.outcome == .running }
@@ -71,6 +73,7 @@ public struct Overview: Sendable, Equatable {
         let maintenance: [BackrestOperation.Kind] = [.forget, .prune, .check]
         let failing = maintenance.compactMap { kind -> String? in
             guard let last = Activity.lastFinished(kind, in: flows), last.outcome.severity == .error else { return nil }
+            if let unlockedAt, (last.end ?? last.start) < unlockedAt { return nil }
             return kind.title
         }
 

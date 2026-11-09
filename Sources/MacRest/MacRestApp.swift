@@ -164,8 +164,11 @@ struct MenuPanel: View {
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Unlock") { Task { await model.repoTask(.unlock) } }.controlSize(.small)
+                    Button("Unlock") { Task { await model.unlock() } }.controlSize(.small)
                 }
+            } else if let notice = model.notice {
+                Label(notice, systemImage: "checkmark.circle").font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if let o = model.overview, !o.failingMaintenance.isEmpty {
                 Label("\(o.failingMaintenance.joined(separator: ", ")) failed on its last run.", systemImage: "exclamationmark.triangle")
                     .font(.callout)

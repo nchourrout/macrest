@@ -112,7 +112,7 @@ final class AppModel {
             flows = grouped.flows
             scheduled = grouped.scheduled
             stats = Activity.latestStats(ops)
-            overview = Overview.make(flows: flows, scheduled: scheduled, now: now)
+            overview = Overview.make(flows: flows, scheduled: scheduled, now: now, unlockedAt: unlockedAt)
             if runningAnything { sentAt = nil }
             if loadError != nil, config != nil { loadError = nil }
         } catch {
@@ -229,13 +229,36 @@ final class AppModel {
 
     func dismissError() { actionError = nil }
 
+    /// When Unlock last succeeded, kept across launches.
+    private(set) var unlockedAt: Date? = UserDefaults.standard.object(forKey: "unlockedAt") as? Date
+    /// A confirmation to show once, then dismiss.
+    private(set) var notice: String?
+
+    func dismissNotice() { notice = nil }
+
+    func unlock() async {
+        await repoTask(.unlock)
+        guard actionError == nil else { return }
+        unlockedAt = Date()
+        UserDefaults.standard.set(unlockedAt, forKey: "unlockedAt")
+        await refreshActivity()
+        let next = scheduled.first { $0.kind == .backup }?.start
+        notice = "Unlocked. Retention, prune and check can run again; retention next runs after the backup"
+            + (next.map { " at \($0.activityLabel)" } ?? "") + "."
+    }
+
     /// Retention, prune and check all need an exclusive lock, so a lock left
     /// behind by a crashed run fails every one of them while backups (shared
     /// lock) keep succeeding: easy to miss for weeks.
+    ///
+    /// A failure older than the last unlock no longer counts: the lock it hit
+    /// is gone, and the next retention run (after the next backup) is the
+    /// first that can say whether it worked.
     var staleLock: (count: Int, all: Bool, reason: String)? {
         let forgets = flows.flatMap(\.steps).filter { $0.kind == .forget }.sorted { $0.id > $1.id }
         guard let last = forgets.first, last.outcome.severity == .error,
               let reason = last.reason, reason.contains("locked") else { return nil }
+        if let unlockedAt, (last.end ?? last.start) < unlockedAt { return nil }
         let count = forgets.prefix { $0.outcome.severity == .error && ($0.reason ?? "").contains("locked") }.count
         return (count, count == forgets.count, reason)
     }

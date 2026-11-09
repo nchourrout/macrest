@@ -40,6 +40,13 @@ let utc: Calendar = {
         #expect(o.severity == .warning)
         #expect(o.title == "Retention is failing")
         #expect(o.failingMaintenance == ["Retention"])
+
+        // After an unlock, that failure no longer counts.
+        let decoded = try Activity.decode(Data(#"{"operations":[\#(op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 2)),\#(op(2, "operationForget", "STATUS_ERROR", hoursAgo: 2, flow: 1, message: "locked"))]}"#.utf8))
+        let (flows, scheduled) = Activity.flows(decoded, now: now)
+        let after = Overview.make(flows: flows, scheduled: scheduled, now: now, unlockedAt: now.addingTimeInterval(-600), calendar: utc)
+        #expect(after.severity == .ok)
+        #expect(after.failingMaintenance.isEmpty)
     }
 
     @Test func staleAndNeverAndChronic() throws {
