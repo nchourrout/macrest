@@ -102,6 +102,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if regular { NSApp.activate() }
     }
 
+    /// Opening MacRest while it runs (MacStatus's backup card, Finder, `open
+    /// -a`) is a reopen. With the menu bar icon and the window closed, the
+    /// default only activated an app with nothing on screen, so the click
+    /// seemed to do nothing: it opens the window instead. Without the icon
+    /// the window is the app, and SwiftUI's default handles it.
+    @MainActor func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard Self.showsMenuBarItem else { return true }
+        if !AppModel.shared.windowVisible { AppModel.shared.windowRequests += 1 }
+        NSApp.activate()
+        return false
+    }
+
     /// Without a menu bar icon, closing the window is quitting: nothing would
     /// be left to reach the app by, and it sends no notifications.
     @MainActor func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -113,12 +125,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// the menu bar's monochrome; dimmed while Backrest cannot be read.
 struct MenuLabel: View {
     let model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let overview = model.overview
         Image(systemName: overview?.menuSymbol ?? "clock.badge.questionmark")
             .opacity(overview == nil ? 0.4 : 1)
             .accessibilityLabel("MacRest: \(overview?.title ?? "the backup engine is not answering")")
+            // The label is always there while the icon is, so it opens the
+            // window asked for by a reopen (see `applicationShouldHandleReopen`).
+            .onChange(of: model.windowRequests) {
+                NSApp.activate()
+                openWindow(id: MainWindow.id)
+            }
     }
 }
 

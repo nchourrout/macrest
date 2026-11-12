@@ -51,6 +51,10 @@ final class AppModel {
     private var sentAt: Date?
     var starting: Bool { sentAt.map { Date().timeIntervalSince($0) < 20 } ?? false }
 
+    /// Bumped to ask for the window from outside a view: `openWindow` exists
+    /// only in a view's environment, so the menu bar label carries it out.
+    var windowRequests = 0
+
     /// The window is on screen: poll faster, and the app takes a Dock icon so
     /// it can be reached with Cmd-Tab.
     var windowVisible = false {
