@@ -23,6 +23,28 @@ enum Terminal {
     }
 }
 
+/// Full Disk Access is granted per program, to the one launchd starts: the
+/// Backrest binary MacRest runs, whose restic inherits it. macOS offers no
+/// way to ask for it, so this opens the list in System Settings and selects
+/// that binary in Finder, to drag into it. The binary is versioned, so a
+/// Backrest update needs the grant again.
+@MainActor
+enum FullDiskAccess {
+    static let settings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!
+
+    static func open() {
+        NSWorkspace.shared.open(settings)
+        if let binary = EngineService.shared.ownBinary { Finder.reveal(binary) }
+    }
+}
+
+enum Finder {
+    /// Opens a Finder window with the item selected.
+    static func reveal(_ path: String) {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+}
+
 /// Asks for a folder with the standard open panel.
 @MainActor
 enum FolderPicker {

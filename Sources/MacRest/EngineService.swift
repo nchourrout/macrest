@@ -39,6 +39,14 @@ final class EngineService {
     }
 
     let paths: EngineAgent.Paths
+
+    /// The Backrest binary this MacRest runs, the one Full Disk Access goes
+    /// on. A Backrest started some other way (Homebrew) lives wherever that
+    /// put it.
+    var ownBinary: String? {
+        guard state == .running, !Links.usesExternalBackrest, FileManager.default.fileExists(atPath: paths.binary) else { return nil }
+        return paths.binary
+    }
     private let agentPlist: String
     private let uid = getuid()
 

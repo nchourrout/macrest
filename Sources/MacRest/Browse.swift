@@ -323,7 +323,7 @@ struct RestoreStatus: View {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.secondary)
                 Text("Restored to \((target as NSString).lastPathComponent)").lineLimit(1).truncationMode(.middle)
                 Button("Show in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: target)])
+                    Finder.reveal(target)
                 }
             case .failed, .cancelled:
                 Image(systemName: "xmark.octagon.fill").foregroundStyle(Theme.error)

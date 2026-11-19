@@ -44,16 +44,14 @@ public enum EngineAgent {
     public struct Paths: Sendable, Equatable {
         public var binary: String
         /// The same folders Homebrew's Backrest used (its defaults), so a
-        /// takeover keeps the config, the oplog and restic, whose Full Disk
-        /// Access grant is tied to that binary.
+        /// takeover keeps the config, the oplog and restic.
         public var config: String
         public var data: String
         public var log: String
         /// The restic Backrest downloads into its data folder. Named
         /// explicitly: left to search PATH, Backrest takes any restic of the
-        /// right version it finds there (Homebrew's), and Full Disk Access is
-        /// granted per executable, so Mail, Messages and Safari would be
-        /// skipped silently.
+        /// right version it finds there (Homebrew's). Full Disk Access goes on
+        /// `binary`, which launchd starts; restic inherits it.
         public var restic: String
 
         public init(home: String, support: String) {

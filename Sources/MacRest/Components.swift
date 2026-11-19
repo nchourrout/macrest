@@ -187,24 +187,43 @@ struct Chevron: View {
 }
 
 /// Two weeks of backups, one column per day, oldest on the left. A column is
-/// split by outcome, so one failure among six runs is a red sliver, and a day
-/// with no run is an empty slot.
+/// split by outcome, so one failure among six runs is a red sliver, a run
+/// that could not reach the storage is hatched grey, and a day with no run
+/// is an empty slot. Hovering a column puts that day, and what
+/// went wrong on it, in the caption line: a `.help` tooltip never shows in the
+/// menu bar panel, which is not a key window, and the caption keeps the
+/// panel's height still.
 struct DaysChart: View {
     let overview: Overview
     var height: CGFloat = 18
+    @ViewState private var hovered: Date?
 
     var body: some View {
         VStack(spacing: 5) {
             HStack(alignment: .bottom, spacing: 3) {
-                ForEach(overview.days, id: \.start) { DayColumn(day: $0) }
+                ForEach(overview.days, id: \.start) { day in
+                    DayColumn(day: day, highlighted: hovered == day.start)
+                        .onHover { inside in
+                            if inside { hovered = day.start } else if hovered == day.start { hovered = nil }
+                        }
+                }
             }
             .frame(height: height)
-            HStack {
-                Text("\(Overview.windowDays) days ago")
-                Spacer()
-                Text(overview.summary)
-                Spacer()
-                Text("today")
+            Group {
+                if let day = overview.days.first(where: { $0.start == hovered }) {
+                    Text(Format.date(day.start, "EEE d MMM") + ": " + day.summary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    HStack {
+                        Text("\(Overview.windowDays) days ago")
+                        Spacer()
+                        Text(overview.summary)
+                        Spacer()
+                        Text("today")
+                    }
+                }
             }
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
@@ -214,6 +233,7 @@ struct DaysChart: View {
 
 private struct DayColumn: View {
     let day: Overview.Day
+    var highlighted = false
 
     var body: some View {
         GeometryReader { geo in
@@ -224,22 +244,51 @@ private struct DayColumn: View {
                 } else {
                     Theme.error.frame(height: h * CGFloat(day.failed) / n)
                     Theme.warning.frame(height: h * CGFloat(day.warned) / n)
+                    Hatch().frame(height: h * CGFloat(day.missed) / n)
                     Color.primary.opacity(0.24).frame(height: h * CGFloat(day.ok) / n)
                 }
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 2.5))
+        .overlay(RoundedRectangle(cornerRadius: 2.5).strokeBorder(Color.primary.opacity(highlighted ? 0.5 : 0), lineWidth: 1.5))
         .frame(maxWidth: .infinity)
-        .help(tooltip)
+        .contentShape(Rectangle())
     }
+}
 
-    private var tooltip: String {
-        let date = Format.date(day.start, "EEE d MMM")
-        guard day.total > 0 else { return "\(date): no backup" }
-        var parts = ["\(day.ok) ok"]
-        if day.warned > 0 { parts.append("\(day.warned) warned") }
-        if day.failed > 0 { parts.append("\(day.failed) failed") }
-        return "\(date): " + parts.joined(separator: ", ")
+/// Diagonal stripes on the empty-day grey: a run was due and nothing could
+/// be done, which is neither a failure nor nothing at all.
+private struct Hatch: View {
+    var body: some View {
+        Canvas { context, size in
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.track))
+            var stripes = Path()
+            var x = -size.height
+            while x < size.width {
+                stripes.move(to: CGPoint(x: x, y: size.height))
+                stripes.addLine(to: CGPoint(x: x + size.height, y: 0))
+                x += 4
+            }
+            context.stroke(stripes, with: .color(.primary.opacity(0.3)), lineWidth: 1)
+        }
+    }
+}
+
+/// The last backup skipped folders macOS keeps from programs without Full
+/// Disk Access (Mail, Messages, Safari, browser profiles): one line saying
+/// so and the way to fix it.
+struct FullDiskAccessRow: View {
+    let skipped: Int
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Image(systemName: "lock.shield").foregroundStyle(Theme.warning)
+            Text("\(Format.plural(skipped, "private folder")) skipped. Allow the backup engine Full Disk Access, then back up again.")
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Allow…") { FullDiskAccess.open() }
+                .help("Open Full Disk Access in System Settings and show the backup engine in Finder, to drag it into the list")
+        }
     }
 }
 

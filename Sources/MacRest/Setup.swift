@@ -114,6 +114,18 @@ struct SetupView: View {
             }
 
             SwiftUI.Section {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Mail, Messages, Safari, Contacts and browser profiles are only readable with Full Disk Access.")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Allow Full Disk Access…") { FullDiskAccess.open() }
+                }
+            } header: {
+                Text("Private data")
+            } footer: {
+                Text("macOS keeps these from background programs until you allow it. MacRest opens the setting and shows the backup engine in Finder: drag it into the list. Without it, backups skip those folders and MacRest says so.")
+            }
+
+            SwiftUI.Section {
                 if let error {
                     Text(error).foregroundStyle(Theme.error).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
