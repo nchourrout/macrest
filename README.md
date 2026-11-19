@@ -63,7 +63,7 @@ MacRest backs up your home folder, not the system: on a new Mac you reinstall yo
 1. Download `MacRest-<version>.dmg` from the [latest release](https://github.com/nchourrout/macrest/releases/latest), open it, and drag MacRest to Applications.
 2. The app is not notarized yet, so the first launch needs one approval: open it, then click **Open Anyway** in **System Settings > Privacy & Security** (or run `xattr -dr com.apple.quarantine /Applications/MacRest.app`).
 3. Open MacRest. It downloads Backrest (a pinned release, checked against its published checksum), starts it in the background, and shows the setup.
-4. To include Mail, Messages and Safari, grant **Full Disk Access** to `~/.local/share/backrest/restic` in System Settings > Privacy & Security. macOS grants it per program, and restic is the one that reads your files.
+4. To include Mail, Messages, Safari and browser profiles, click **Allow Full Disk Access…** in the setup: MacRest opens the setting and shows the backup engine (`~/Library/Application Support/MacRest/backrest-<version>/backrest`) in Finder, to drag into the list. macOS grants it per program, and restic inherits it from the engine. After a Backrest update, MacRest asks again if backups start skipping those folders.
 
 Requires macOS 26 or later. Releases are built for Apple silicon.
 

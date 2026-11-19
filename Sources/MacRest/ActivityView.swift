@@ -33,6 +33,9 @@ struct ActivityView: View {
                     StaleLockRow(count: lock.failedRuns, all: lock.coversWholeLog, reason: lock.reason) { Task { await model.unlock() } }
                 }
             }
+            if let skipped = model.overview?.privateFoldersSkipped, skipped > 0 {
+                SwiftUI.Section { FullDiskAccessRow(skipped: skipped) }
+            }
             if let run = model.runningBackup {
                 SwiftUI.Section("Now") { RunningBackupRow(op: run.primary) }
             }
@@ -268,7 +271,7 @@ struct FlowRow: View {
             if let c = b.filesChanged, c > 0 { parts.append("\(Format.count(c)) changed") }
             if let n = b.filesNew, n > 0 { parts.append("\(Format.count(n)) new") }
             if let total = b.bytesProcessed { parts.append("\(Format.size(total)) scanned") }
-            if b.errors > 0 { parts.append(Format.plural(b.errors, "unreadable file")) }
+            if let skipped = b.skippedText { parts.append(skipped) }
             return parts.joined(separator: " · ")
         case .stats:
             guard let s = op.stats, let size = s.totalSize else { return nil }

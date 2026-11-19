@@ -52,10 +52,47 @@ let utc: Calendar = {
     @Test func staleAndNeverAndChronic() throws {
         #expect(try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 40)]).title == "Backups have stopped")
         #expect(try overview([]).severity == .unknown)
-        let chronic = try overview((1...4).map { op($0, "operationBackup", $0 == 4 ? "STATUS_SUCCESS" : "STATUS_ERROR", hoursAgo: Double(10 - $0)) })
+        // Failures a clean backup made up for stay in the tally, not in the verdict.
+        let recovered = try overview((1...4).map { op($0, "operationBackup", $0 == 4 ? "STATUS_SUCCESS" : "STATUS_ERROR", hoursAgo: Double(10 - $0)) })
+        #expect(recovered.severity == .ok)
+        #expect(recovered.title == "Backups healthy")
+        #expect(recovered.failed == 3)
+        // Warnings with mostly failures since the last clean backup are an error.
+        let chronic = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 9),
+                                    op(2, "operationBackup", "STATUS_ERROR", hoursAgo: 8),
+                                    op(3, "operationBackup", "STATUS_ERROR", hoursAgo: 7),
+                                    op(4, "operationBackup", "STATUS_WARNING", hoursAgo: 6)])
         #expect(chronic.severity == .error)
-        #expect(chronic.title == "Backups failing often")
-        #expect(chronic.failed == 3)
+        #expect(chronic.title == "Last backup warned")
+    }
+
+    @Test func unreachableStorageIsMissedNotFailed() throws {
+        let sftp = "failed\nOutput:\nssh: connect to host h port 22: Operation timed out\nFatal: unable to open repository at sftp:h:/r: unable to start the sftp session"
+        let o = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 6),
+                              op(2, "operationBackup", "STATUS_ERROR", hoursAgo: 3, message: sftp),
+                              op(3, "operationBackup", "STATUS_ERROR", hoursAgo: 1, message: sftp)])
+        #expect(o.severity == .ok)
+        #expect(o.title == "Backups healthy")
+        #expect(o.subtitle.hasPrefix("last backup 5h ago · storage unreachable"))
+        #expect(o.failed == 0)
+        #expect(o.missed == 2)
+        #expect(o.summary == "1 ok · 0 failed · 2 missed")
+        // Past the staleness limit, misses are backups that stopped.
+        let stale = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 40),
+                                  op(2, "operationBackup", "STATUS_ERROR", hoursAgo: 1, message: sftp)])
+        #expect(stale.title == "Backups have stopped")
+        #expect(stale.severity == .error)
+        // Never reached at all.
+        #expect(try overview([op(1, "operationBackup", "STATUS_ERROR", hoursAgo: 1, message: sftp)]).title == "Storage unreachable")
+        // A long outage that pushed the last good backup out of the log.
+        let gone = try overview([op(1, "operationBackup", "STATUS_ERROR", hoursAgo: 50, message: sftp),
+                                 op(2, "operationBackup", "STATUS_ERROR", hoursAgo: 1, message: sftp)])
+        #expect(gone.title == "Backups have stopped")
+        #expect(gone.subtitle.hasPrefix("last try "))
+        // Any other failure stays a failure.
+        let broken = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 6),
+                                   op(2, "operationBackup", "STATUS_ERROR", hoursAgo: 1, message: "Fatal: wrong password or no key found")])
+        #expect(broken.title == "Last backup failed")
     }
 }
 
@@ -88,5 +125,40 @@ let utc: Calendar = {
     @Test func breadcrumb() {
         #expect(Snapshots.breadcrumb("/Users/alex/dev/x", root: "/Users/alex") == ["/Users/alex", "/Users/alex/dev", "/Users/alex/dev/x"])
         #expect(Snapshots.breadcrumb("/Users/alex", root: "/Users/alex") == ["/Users/alex"])
+    }
+}
+
+@Suite struct UnreachableTests {
+    /// restic's and ssh's own output, with real line breaks.
+    @Test func classifiesTheWholeOutput() {
+        let offline = "failed to get snapshots\nOutput:\nsubprocess ssh: ssh: connect to host 100.75.2.128 port 22: Operation timed out\n{\"message_type\":\"exit_error\",\"code\":1,\"message\":\"Fatal: unable to open repository at sftp:h:/r: unable to start the sftp session, error: unexpected EOF\"}"
+        let unplugged = "failed\nOutput:\nFatal: unable to open config file: stat /Volumes/X/config: no such file or directory\nIs there a repository at the following location?\n/Volumes/X"
+        let revoked = "failed\nOutput:\nsubprocess ssh: nico@h: Permission denied (publickey).\n{\"message_type\":\"exit_error\",\"code\":1,\"message\":\"Fatal: unable to open repository at sftp:h:/r: unable to start the sftp session, error: unexpected EOF\"}"
+        let locked = "Fatal: unable to create lock in backend: repository is already locked"
+        #expect(BackrestOperation.isUnreachable(offline))
+        #expect(BackrestOperation.isUnreachable(unplugged))
+        #expect(BackrestOperation.isUnreachable("Fatal: unable to start the sftp session, error: error receiving version packet from server: error reading packet length: 0 of 4: read |0: file already closed"))
+        #expect(!BackrestOperation.isUnreachable(revoked))
+        #expect(!BackrestOperation.isUnreachable(locked))
+    }
+}
+
+@Suite struct DayProblemTests {
+    @Test func failuresAndWarningsExplainTheirDay() throws {
+        let sftp = "failed to get snapshots\nOutput:\nssh: connect to host h port 22: Operation timed out\nFatal: unable to open repository at sftp:h:/r: unable to start the sftp session"
+        let start = Int64((now.timeIntervalSince1970 - 3600) * 1000)
+        let warned = #"{"id":"3","status":"STATUS_WARNING","unixTimeStartMs":"\#(start)","unixTimeEndMs":"\#(start + 1000)","displayMessage":"Partial backup","operationBackup":{"errors":[{"item":"/a","message":"open /a: operation not permitted"},{"item":"/b","message":"open /b: operation not permitted"}]}}"#
+        let mixed = #"{"id":"4","status":"STATUS_WARNING","unixTimeStartMs":"\#(start - 7_200_000)","unixTimeEndMs":"\#(start - 7_199_000)","operationBackup":{"errors":[{"item":"/c","message":"open /c: operation not permitted"},{"item":"/d","message":"read /d: input/output error"}]}}"#
+        let skipped = try Activity.decode(Data(#"{"operations":[\#(mixed)]}"#.utf8)).first?.problem
+        #expect(skipped == "1 private folder and 1 unreadable file skipped, no Full Disk Access")
+        let o = try overview([op(1, "operationBackup", "STATUS_ERROR", hoursAgo: 3, message: sftp),
+                              op(2, "operationBackup", "STATUS_ERROR", hoursAgo: 2, message: sftp),
+                              warned])
+        #expect(o.days.last?.problems == ["2× Storage unreachable", "2 private folders skipped, no Full Disk Access"])
+        #expect(o.days.last?.missed == 2)
+        #expect(o.privateFoldersSkipped == 2)
+        #expect(o.days.last?.summary == "1 warned, 2 missed · 2× Storage unreachable · 2 private folders skipped, no Full Disk Access")
+        #expect(o.days.first?.summary == "no backup")
+        #expect(o.title == "Last backup warned")
     }
 }

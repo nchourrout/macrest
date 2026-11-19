@@ -56,6 +56,18 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
         public var filesChanged: Int64?
         public var bytesProcessed: Int64?
         public var errors = 0
+        /// Those of them macOS privacy protection refused, which only Full
+        /// Disk Access lifts.
+        public var permissionDenied = 0
+
+        /// The unreadable items, in plain words: the private folders apart
+        /// from other unreadable files, since only the first need an action.
+        public var skippedText: String? {
+            let other = errors - permissionDenied
+            let parts = [permissionDenied > 0 ? Format.plural(permissionDenied, "private folder") : nil,
+                         other > 0 ? Format.plural(other, "unreadable file") : nil].compactMap { $0 }
+            return parts.isEmpty ? nil : parts.joined(separator: " and ") + " skipped"
+        }
     }
 
     public struct Stats: Sendable, Equatable, Codable {
@@ -79,6 +91,11 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
     public var stats: Stats?
     public var hookCondition: String?
     public var restoreTarget: String?
+    /// A failure to reach the storage at all (offline, server asleep, disk
+    /// unplugged): nothing was backed up, but nothing is broken either, so
+    /// the verdict counts it as a missed run rather than a failure. Classified
+    /// once at decode, since the verdict asks on every poll.
+    public var storageUnreachable = false
 
     public var outcome: Outcome { Outcome(status) }
 
@@ -147,6 +164,9 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
         end = int(.unixTimeEndMs).flatMap { $0 > 0 ? Date(timeIntervalSince1970: TimeInterval($0) / 1000) : nil }
         message = string(.displayMessage)
         logref = string(.logref)
+        if Outcome(status) == .failed, let message {
+            storageUnreachable = Self.isUnreachable(message)
+        }
 
         let kinds: [(CodingKeys, Kind)] = [
             (.operationBackup, .backup), (.operationForget, .forget), (.operationPrune, .prune),
@@ -158,6 +178,7 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
         switch kind {
         case .backup:
             let b = try? c.decode(JSONValue.self, forKey: .operationBackup)
+            let errors = b?["errors"]?.array ?? []
             let status = b?["lastStatus"]?["status"]
             let summary = b?["lastStatus"]?["summary"]
             func i64(_ v: JSONValue?) -> Int64? { v?.int64 }
@@ -167,7 +188,8 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
                 totalFiles: i64(status?["totalFiles"]), currentFile: status?["currentFile"]?.strings.first,
                 dataAdded: i64(summary?["dataAdded"]), filesNew: i64(summary?["filesNew"]),
                 filesChanged: i64(summary?["filesChanged"]), bytesProcessed: i64(summary?["totalBytesProcessed"]),
-                errors: b?["errors"]?.array?.count ?? 0)
+                errors: errors.count,
+                permissionDenied: errors.filter { $0["message"]?.string?.contains("operation not permitted") == true }.count)
         case .stats:
             let s = (try? c.decode(JSONValue.self, forKey: .operationStats))?["stats"]
             stats = Stats(totalSize: s?["totalSize"]?.int64,
@@ -190,6 +212,47 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
     public var reason: String? {
         guard let message, outcome.severity != .ok else { return nil }
         return Activity.reason(from: message)
+    }
+}
+
+extension BackrestOperation {
+    /// What restic and ssh say when the storage cannot be reached: a server
+    /// that does not answer, a network that is down, a disk that is not
+    /// mounted. Matched against the whole output, where ssh's own line
+    /// ("connect to host … Operation timed out") and restic's second line
+    /// for a missing repository are, not just the one-line reason.
+    static let unreachableMarkers = ["operation timed out", "connection timed out", "i/o timeout", "connection refused",
+                                     "no route to host", "network is unreachable", "could not resolve hostname",
+                                     "no such host", "is there a repository at the following location",
+                                     // ssh died before restic read a byte, its stderr lost: seen
+                                     // after the same 75 s connect timeout as the lines above.
+                                     "error reading packet length: 0 of 4"]
+    /// Reaching the storage and being refused is broken, not missed, even
+    /// when a timeout shows in the same output.
+    static let refusalMarkers = ["permission denied", "host key verification failed", "access denied",
+                                 "wrong password", "unauthorized", "forbidden"]
+
+    static func isUnreachable(_ message: String) -> Bool {
+        let text = message.lowercased()
+        return unreachableMarkers.contains { text.contains($0) } && !refusalMarkers.contains { text.contains($0) }
+    }
+
+    /// What went wrong, in plain words, for a hover or a one-line caption:
+    /// unreadable files on a warning, the cause on a failure.
+    public var problem: String? {
+        switch outcome {
+        case .warning:
+            if let b = backup, let skipped = b.skippedText {
+                return b.permissionDenied > 0 ? skipped + ", no Full Disk Access" : skipped
+            }
+            return reason
+        case .cancelled:
+            return outcome.label
+        case .failed:
+            return storageUnreachable ? "Storage unreachable" : reason
+        default:
+            return nil
+        }
     }
 }
 

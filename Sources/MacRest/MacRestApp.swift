@@ -196,6 +196,8 @@ struct MenuPanel: View {
             } else if let notice = model.notice {
                 Label(notice, systemImage: "checkmark.circle").font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if let skipped = model.overview?.privateFoldersSkipped, skipped > 0 {
+                FullDiskAccessRow(skipped: skipped).font(.callout).controlSize(.small)
             } else if let o = model.overview, !o.failingMaintenance.isEmpty {
                 Label("\(o.failingMaintenance.joined(separator: ", ")) failed on its last run.", systemImage: "exclamationmark.triangle")
                     .font(.callout)
