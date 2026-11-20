@@ -216,17 +216,28 @@ struct MenuPanel: View {
             .controlSize(.large)
 
             Divider().padding(.horizontal, 4)
-            // Menu rows, as in the system's own menu bar panels: full width,
-            // highlighted on hover, with the shortcut on the right.
-            VStack(spacing: 0) {
-                MenuRow(title: "Open MacRest", shortcut: "⌘O") { open(nil) }
-                    .keyboardShortcut("o")
-                MenuRow(title: "About MacRest", shortcut: "v\(About.version)") { About.show() }
-                MenuRow(title: "Quit", shortcut: "⌘Q") { NSApp.terminate(nil) }
+            // One footer line, as MacStatus's: Open on the left, the version
+            // (About) and Quit on the right. Three full-width menu rows took
+            // a third of the panel for actions used once a day at most.
+            HStack(spacing: 2) {
+                FooterButton(action: { open(nil) }) {
+                    HStack(spacing: 6) {
+                        Text("Open MacRest").foregroundStyle(.primary)
+                        Text("⌘O")
+                    }
+                }
+                .keyboardShortcut("o")
+                Spacer(minLength: 8)
+                FooterButton(action: { About.show() }) { Text("v\(About.version)").monospacedDigit() }
+                    .accessibilityLabel("About MacRest")
+                FooterButton(action: { NSApp.terminate(nil) }) { Image(systemName: "power") }
                     .keyboardShortcut("q")
+                    .accessibilityLabel("Quit MacRest")
             }
-            .padding(.horizontal, -8)
-            .padding(.top, -6)
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, -6)
+            .padding(.vertical, -4)
         }
         .padding(14)
         .frame(width: 330)
@@ -247,28 +258,20 @@ struct MenuPanel: View {
     }
 }
 
-/// A plain menu item inside the panel: the title on the left, its shortcut
-/// dimmed on the right, and the system's hover highlight.
-private struct MenuRow: View {
-    let title: String
-    let shortcut: String
+/// A borderless footer control with the system's hover highlight.
+private struct FooterButton<Content: View>: View {
     let action: () -> Void
+    @ViewBuilder let content: () -> Content
     @ViewState private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(shortcut).foregroundStyle(.secondary)
-            }
-            .font(.system(size: 13))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .frame(maxWidth: .infinity)
-            .background(hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
-                        in: RoundedRectangle(cornerRadius: 6))
-            .contentShape(Rectangle())
+            content()
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
+                            in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
