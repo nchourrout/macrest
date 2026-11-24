@@ -13,22 +13,10 @@ public enum Links {
 
 /// How bad a reading is. Unknown sits between warning and error: a Backrest
 /// that cannot be reached is worse than a warning and less certain than a
-/// failure. Every comparison goes through `rank`.
-public enum Severity: Int, Sendable {
-    case ok, warning, error, unknown
-
-    var rank: Int {
-        switch self {
-        case .ok: 0
-        case .warning: 1
-        case .unknown: 2
-        case .error: 3
-        }
-    }
-}
-
-extension Severity: Comparable {
-    public static func < (a: Severity, b: Severity) -> Bool { a.rank < b.rank }
+/// failure. Comparable by declaration order, so the order of the cases is
+/// the ranking.
+public enum Severity: Sendable, Comparable {
+    case ok, warning, unknown, error
 }
 
 /// Backrest's int64 fields arrive as JSON strings ("1793732038492"), the
@@ -47,26 +35,8 @@ public struct LenientInt: Decodable, Sendable, Equatable {
     }
 }
 
-/// What one Backrest run status means.
-enum RunOutcome {
-    case success, warning, failed, cancelled, running, unknown
-
-    init(_ status: String?) {
-        switch status {
-        case "STATUS_SUCCESS": self = .success
-        case "STATUS_WARNING": self = .warning
-        case "STATUS_ERROR": self = .failed
-        // Backrest reports a backup killed by sleep as cancelled, not as an
-        // error. It still did not back anything up, so it counts as a failure.
-        case "STATUS_USER_CANCELLED", "STATUS_SYSTEM_CANCELLED": self = .cancelled
-        case "STATUS_INPROGRESS", "STATUS_PENDING": self = .running
-        default: self = .unknown
-        }
-    }
-}
-
 public enum Format {
-    /// Bytes to a compact size. Single digits keep a decimal.
+    /// Bytes to a compact size. Single digits keep a decimal from M up.
     public static func size(_ bytes: Int64) -> String {
         let units = ["K", "M", "G", "T"]
         var v = Double(max(bytes, 0)) / 1024

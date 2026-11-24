@@ -3,13 +3,14 @@ import MacRestCore
 
 /// Backrest's Connect API on localhost, the same one its web UI calls. Unary
 /// calls are a JSON POST; `GetLogs` is a server stream (see `ConnectStream`).
-enum BackrestClient {
-    struct Failure: LocalizedError {
-        var message: String
-        var isTimeout = false
-        var errorDescription: String? { message }
-    }
+/// An error carrying the sentence to show.
+struct Failure: LocalizedError {
+    var message: String
+    init(_ message: String) { self.message = message }
+    var errorDescription: String? { message }
+}
 
+enum BackrestClient {
     static func call(_ method: String, _ body: some Encodable, timeout: TimeInterval = 15) async throws -> Data {
         var request = URLRequest(url: URL(string: "\(Links.backrestURL)/v1.Backrest/\(method)")!)
         request.httpMethod = "POST"
@@ -23,17 +24,17 @@ enum BackrestClient {
             // Snapshot listings read the storage over the network, and Backrest
             // runs one restic command per repository at a time, so a listing can
             // wait behind a backup or another listing.
-            throw Failure(message: "The backup engine took too long to answer. It reads the storage over the network and may be busy with another task.", isTimeout: true)
+            throw Failure("The backup engine took too long to answer. It reads the storage over the network and may be busy with another task.")
         } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
         } catch {
-            throw Failure(message: "The backup engine (Backrest) is not running. MacRest restarts it on its own; if this stays, use Restart Backup Engine in the … menu.")
+            throw Failure("The backup engine (Backrest) is not running. MacRest restarts it on its own; if this stays, use Restart Backup Engine in the … menu.")
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
             // A Connect error is {"code": "...", "message": "..."}.
             let error = try? JSONDecoder().decode(JSONValue.self, from: data)
-            throw Failure(message: error?["message"]?.string ?? "Backrest answered \(status) to \(method)")
+            throw Failure(error?["message"]?.string ?? "The backup engine refused the request (\(status)).")
         }
         return data
     }
@@ -61,9 +62,8 @@ enum BackrestClient {
         _ = try await call("Cancel", JSONValue.object(["operationId": .string(String(operation))]))
     }
 
-    enum RepoTask: String, CaseIterable {
+    enum RepoTask: String {
         case check = "TASK_CHECK", prune = "TASK_PRUNE", stats = "TASK_STATS", unlock = "TASK_UNLOCK"
-        case indexSnapshots = "TASK_INDEX_SNAPSHOTS"
 
         /// The operation it shows as in the oplog; unlock leaves none.
         var kind: BackrestOperation.Kind? {
@@ -71,7 +71,6 @@ enum BackrestClient {
             case .check: .check
             case .prune: .prune
             case .stats: .stats
-            case .indexSnapshots: .indexSnapshot
             case .unlock: nil
             }
         }
@@ -92,7 +91,7 @@ enum BackrestClient {
     static func runCommand(repo: String, command: String) async throws -> Int64 {
         let body = JSONValue.object(["repoId": .string(repo), "command": .string(command)])
         let v = try JSONDecoder().decode(JSONValue.self, from: try await call("RunCommand", body, timeout: 600))
-        guard let id = v["operationId"]?.int64 else { throw Failure(message: "The backup engine did not say which run it started.") }
+        guard let id = v["operationId"]?.int64 else { throw Failure("The backup engine did not say which run it started.") }
         return id
     }
 
@@ -104,7 +103,7 @@ enum BackrestClient {
         request.timeoutInterval = 20
         let (data, _) = try await URLSession.shared.data(for: request)
         let log = ConnectStream.logText(data)
-        if let error = log.error, log.text.isEmpty { throw Failure(message: error) }
+        if let error = log.error, log.text.isEmpty { throw Failure(error) }
         return log.text
     }
 }

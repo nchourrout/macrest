@@ -126,7 +126,9 @@ public enum SetupDefaults {
     /// (`created-by:<id>`), and a plan only lists snapshots carrying its own.
     /// A new Mac continuing an old one's repository should reuse that id.
     public static func instanceID(from name: String) -> String {
-        let allowed = name.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }
+        // ASCII only, transliterated: "Hélène" is "helene", "Bjørn" "bjorn".
+        let folded = name.applyingTransform(StringTransform("Any-Latin; Latin-ASCII"), reverse: false) ?? name
+        let allowed = folded.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" }
         let collapsed = String(allowed).split(separator: "-").joined(separator: "-")
         return collapsed.isEmpty ? "mac" : collapsed
     }
@@ -154,11 +156,11 @@ public enum SetupDefaults {
             // repo's guid, and Backrest rejects the two together.
             "autoUnlock": .bool(autoUnlock),
             "prunePolicy": .object([
-                "schedule": .object(["maxFrequencyDays": .number(7), "clock": .string("CLOCK_LAST_RUN_TIME")]),
+                "schedule": ScheduleSetting.everyDays(7).json(keepingClock: nil),
                 "maxUnusedPercent": .number(10),
             ]),
             "checkPolicy": .object([
-                "schedule": .object(["maxFrequencyDays": .number(30), "clock": .string("CLOCK_LAST_RUN_TIME")]),
+                "schedule": ScheduleSetting.everyDays(30).json(keepingClock: nil),
                 "readDataSubsetPercent": .number(5),
             ]),
         ])
@@ -169,12 +171,20 @@ public enum SetupDefaults {
             "id": .string(id), "repo": .string(repo),
             "paths": .array(paths.map(JSONValue.string)),
             "excludes": .array(excludes.map(JSONValue.string)),
-            "schedule": .object(["maxFrequencyHours": .number(Double(everyHours)), "clock": .string("CLOCK_LAST_RUN_TIME")]),
-            "retention": .object(["policyTimeBucketed": .object([
-                "hourly": .number(24), "daily": .number(30), "weekly": .number(52), "monthly": .number(24),
-            ])]),
+            "schedule": ScheduleSetting.everyHours(everyHours).json(keepingClock: nil),
+            "retention": RetentionSetting.buckets(.timeMachine).json,
             "backup_flags": .array([.string("--exclude-caches")]),
         ])
+    }
+
+    /// Why the setup cannot start yet, once the storage fields are complete.
+    /// The minimum length guards a new password only: an existing one is
+    /// what it is. `instance` is nil when Backrest already has a name.
+    public static func startBlocker(password: String, existing: Bool, instance: String?) -> String? {
+        if password.isEmpty { return "Enter the password." }
+        if !existing && password.count < 8 { return "The password needs at least 8 characters." }
+        if instance?.isEmpty == true { return "Enter a name for this Mac." }
+        return nil
     }
 
     /// Whether Backrest's config still needs a setup: no repository or no plan.

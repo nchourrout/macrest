@@ -2,6 +2,21 @@ import AppKit
 import MacRestCore
 import SwiftUI
 
+extension MaintenanceRow {
+    /// A row for one kind of run, its title and symbol the kind's own.
+    @MainActor init(_ kind: BackrestOperation.Kind, model: AppModel, note: String, @ViewBuilder action: () -> Action) {
+        self.init(title: kind.title, symbol: kind.symbol, last: Activity.lastFinished(kind, in: model.flows),
+                  next: kind == .forget ? nil : Activity.next(kind, in: model.scheduled), note: note,
+                  unlockedAt: model.unlockedAt, busy: model.isBusy(kind), action: action)
+    }
+}
+
+extension MaintenanceRow where Action == EmptyView {
+    @MainActor init(_ kind: BackrestOperation.Kind, model: AppModel, note: String) {
+        self.init(kind, model: model, note: note) { EmptyView() }
+    }
+}
+
 /// One maintenance job: when it last ran and how that went, when it runs
 /// next, and a button to run it now.
 struct MaintenanceRow<Action: View>: View {
@@ -19,8 +34,8 @@ struct MaintenanceRow<Action: View>: View {
     @ViewBuilder var action: Action
 
     private var superseded: Bool {
-        guard let last, last.outcome.severity != .ok, let unlockedAt else { return false }
-        return (last.end ?? last.start) < unlockedAt
+        guard let last, last.outcome.severity != .ok else { return false }
+        return last.predates(unlock: unlockedAt)
     }
 
     var body: some View {
@@ -40,7 +55,7 @@ struct MaintenanceRow<Action: View>: View {
                         Text("Running now. It can take a while; Activity shows it.").font(.callout).foregroundStyle(.secondary)
                     }
                 } else {
-                    Text(status).font(.callout).foregroundStyle(noteSeverity == .ok ? Color.secondary : Theme.color(noteSeverity))
+                    Text(status).font(.callout).foregroundStyle(Theme.tint(noteSeverity))
                         .lineLimit(2)
                         .help(last?.reason ?? "")
                 }
@@ -54,7 +69,7 @@ struct MaintenanceRow<Action: View>: View {
     private var status: String {
         var parts: [String] = []
         if let last {
-            let ago = Format.ago(Int(Date().timeIntervalSince(last.end ?? last.start)))
+            let ago = Format.ago(Int(Date().timeIntervalSince(last.finishedAt)))
             if last.outcome == .success {
                 parts.append("Last ran \(ago)")
             } else if superseded {
@@ -132,22 +147,12 @@ struct StorageView: View {
                 // Each button waits on its own task only: disabling the whole
                 // section while any task started made every button blink.
                 SwiftUI.Section {
-                    MaintenanceRow(title: "Cleanup", symbol: "calendar.badge.minus",
-                                   last: Activity.lastFinished(.forget, in: model.flows), next: nil,
-                                   note: "Removes backups past their keep period, after every backup", unlockedAt: model.unlockedAt)
-                    MaintenanceRow(title: "Verification", symbol: "checkmark.shield",
-                                   last: Activity.lastFinished(.check, in: model.flows),
-                                   next: model.scheduled.first { $0.kind == .check }?.start,
-                                   note: "Reads the storage back to catch damage", unlockedAt: model.unlockedAt,
-                                   busy: model.isBusy(.check)) {
+                    MaintenanceRow(.forget, model: model, note: "Removes backups past their keep period, after every backup")
+                    MaintenanceRow(.check, model: model, note: "Reads the storage back to catch damage") {
                         Button("Verify Now") { Task { await model.repoTask(.check) } }
                             .disabled(model.isBusy(.check))
                     }
-                    MaintenanceRow(title: "Space recovery", symbol: "scissors",
-                                   last: Activity.lastFinished(.prune, in: model.flows),
-                                   next: model.scheduled.first { $0.kind == .prune }?.start,
-                                   note: "Deletes data that only removed backups used, so the storage shrinks", unlockedAt: model.unlockedAt,
-                                   busy: model.isBusy(.prune)) {
+                    MaintenanceRow(.prune, model: model, note: "Deletes data that only removed backups used, so the storage shrinks") {
                         Button("Free Up Space…") { confirmPrune = true }
                             .disabled(model.isBusy(.prune))
                             .help("Delete stored data that no remaining backup needs")
@@ -216,10 +221,7 @@ struct StorageView: View {
                         Text(revealsPassword ? kit.password : String(repeating: "•", count: 12))
                             .font(.body.monospaced())
                             .textSelection(.enabled)
-                        Button { revealsPassword.toggle() } label: { Image(systemName: revealsPassword ? "eye.slash" : "eye") }
-                            .buttonStyle(.borderless)
-                            .help(revealsPassword ? "Hide Password" : "Show Password")
-                            .accessibilityLabel(revealsPassword ? "Hide Password" : "Show Password")
+                        RevealButton(revealed: $revealsPassword)
                         CopyButton(secret: true) { kit.password }.controlSize(.small)
                     }
                 }

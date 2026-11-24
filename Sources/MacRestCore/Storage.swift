@@ -46,7 +46,7 @@ public struct StorageForm: Sendable, Equatable {
     }
 
     /// How an SFTP connection authenticates.
-    public enum SSHAuth: String, CaseIterable, Sendable {
+    public enum SSHAuth: Sendable {
         /// Whatever `ssh` would use on its own: ~/.ssh/config, the agent,
         /// the default keys.
         case system

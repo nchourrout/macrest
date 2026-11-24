@@ -191,39 +191,25 @@ struct MenuPanel: View {
                 .font(.callout)
             }
 
-            if let error = model.actionError {
+            Group {
                 // The window banner is not there while only the panel is.
-                HStack(alignment: .firstTextBaseline) {
-                    Image(systemName: "xmark.octagon.fill").foregroundStyle(Theme.error)
-                    Text(error).font(.callout).textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Dismiss") { model.dismissError() }.controlSize(.small)
+                if let error = model.actionError {
+                    NoticeRow(symbol: "xmark.octagon.fill", tint: Theme.error, text: error, button: "Dismiss") { model.dismissError() }
+                } else if model.staleLock != nil {
+                    NoticeRow(symbol: "lock.trianglebadge.exclamationmark", tint: Theme.error,
+                              text: "A leftover lock is stopping old backups from being removed.",
+                              button: model.unlocking ? "Unlocking…" : "Unlock", disabled: model.unlocking) { Task { await model.unlock() } }
+                } else if let notice = model.notice {
+                    NoticeRow(symbol: "checkmark.circle", tint: .secondary, text: notice, button: "OK") { model.dismissNotice() }
+                } else if let skipped = model.overview?.privateFoldersSkipped, skipped > 0 {
+                    FullDiskAccessRow(skipped: skipped)
+                } else if let o = model.overview, !o.failingMaintenance.isEmpty {
+                    Label(Format.failing(o.failingMaintenance), systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(Theme.warning)
                 }
-            } else if model.staleLock != nil {
-                HStack(alignment: .firstTextBaseline) {
-                    Image(systemName: "lock.trianglebadge.exclamationmark").foregroundStyle(Theme.error)
-                    Text("A leftover lock is stopping old backups from being removed.")
-                        .font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button(model.unlocking ? "Unlocking…" : "Unlock") { Task { await model.unlock() } }
-                        .controlSize(.small).disabled(model.unlocking)
-                }
-            } else if let notice = model.notice {
-                HStack(alignment: .firstTextBaseline) {
-                    Label(notice, systemImage: "checkmark.circle").font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("OK") { model.dismissNotice() }.controlSize(.small)
-                }
-            } else if let skipped = model.overview?.privateFoldersSkipped, skipped > 0 {
-                FullDiskAccessRow(skipped: skipped).font(.callout).controlSize(.small)
-            } else if let o = model.overview, !o.failingMaintenance.isEmpty {
-                Label(Format.failing(o.failingMaintenance), systemImage: "exclamationmark.triangle")
-                    .font(.callout)
-                    .foregroundStyle(Theme.warning)
             }
+            .font(.callout)
+            .controlSize(.small)
 
             HStack(spacing: 8) {
                 Button { Task { await model.backupNow() } } label: {

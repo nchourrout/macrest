@@ -11,6 +11,9 @@ struct BrowseView: View {
     @ViewState private var selection: Set<SnapshotEntry.ID> = []
     @ViewState private var restoring: SnapshotEntry?
     @ViewState private var lastTarget: String?
+    /// The newest restore asked for: an older one answering late must not
+    /// take the footer from it.
+    @ViewState private var restoreRequest = 0
     /// Dot-files hidden by default, as in Finder; the home folder starts with
     /// forty of them.
     @AppStorage("showsHiddenFiles") private var showsHidden = false
@@ -76,7 +79,11 @@ struct BrowseView: View {
         .sheet(item: $restoring) { entry in
             RestoreSheet(entry: entry, snapshot: model.selectedSnapshot) { target in
                 lastTarget = nil
-                Task { if await model.restore(entry, to: target) { lastTarget = target } }
+                restoreRequest += 1
+                let request = restoreRequest
+                Task {
+                    if await model.restore(entry, to: target), request == restoreRequest { lastTarget = target }
+                }
             }
         }
     }
@@ -487,9 +494,14 @@ struct RestoreStatus: View {
     var body: some View {
         HStack(spacing: 8) {
             switch op?.outcome {
-            case .success:
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.secondary)
-                Text("Restored to \((target as NSString).lastPathComponent)").lineLimit(1).truncationMode(.middle)
+            case .success, .warning:
+                // A warning is a finished restore with files it could not
+                // write; Activity lists them.
+                Image(systemName: op?.outcome == .warning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(op?.outcome == .warning ? Theme.warning : .secondary)
+                Text((op?.outcome == .warning ? "Restored with warnings to " : "Restored to ") + (target as NSString).lastPathComponent)
+                    .lineLimit(1).truncationMode(.middle)
+                    .help(op?.reason ?? "")
                 Button("Show in Finder") {
                     Finder.reveal(target)
                 }

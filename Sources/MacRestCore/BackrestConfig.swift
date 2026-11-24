@@ -1,9 +1,5 @@
 import Foundation
 
-/// The part of Backrest's config the Backups window edits, read out of the
-/// whole document and written back into it (`applied(to:)`) so every other
-/// field survives the round trip. See `JSONValue` for why.
-
 /// When something runs. Backrest's `Schedule` is a oneof plus a clock.
 public enum ScheduleSetting: Sendable, Equatable, Hashable {
     case disabled
@@ -51,6 +47,11 @@ public struct TimeBuckets: Sendable, Equatable, Hashable {
     public var monthly = 0
     public var yearly = 0
     public var keepLastN = 0
+
+    /// Time Machine's own: hourly for a day, daily for a month, weekly for a
+    /// year, and monthly for two years.
+    public static let timeMachine = TimeBuckets(hourly: 24, daily: 30, weekly: 52, monthly: 24)
+    public static let timeMachineText = "Hourly for a day, daily for a month, weekly for a year, monthly for two years"
 
     public init(hourly: Int = 0, daily: Int = 0, weekly: Int = 0, monthly: Int = 0, yearly: Int = 0, keepLastN: Int = 0) {
         self.hourly = hourly
@@ -168,66 +169,88 @@ public struct RepoSettings: Sendable, Equatable {
     }
 }
 
+/// The part of Backrest's config MacRest edits, read out of the whole
+/// document and written back into it (`applied`) so every other field
+/// survives the round trip. See `JSONValue` for why.
 public enum BackrestConfig {
     /// The first plan and its repository, which is the whole setup here. nil
     /// when the document has no plan or the plan names a missing repo.
     public static func read(_ config: JSONValue) -> (PlanSettings, RepoSettings)? {
-        guard let plan = config["plans"]?.array?.first,
-              let planID = plan["id"]?.string, let repoID = plan["repo"]?.string,
+        guard let plan = config["plans"]?.array?.first, let repoID = plan["repo"]?.string,
               let repo = config["repos"]?.array?.first(where: { $0["id"]?.string == repoID })
         else { return nil }
-        let settings = PlanSettings(
-            id: planID, repo: repoID, paths: plan["paths"]?.strings ?? [], excludes: plan["excludes"]?.strings ?? [],
+        return (planSettings(plan), repoSettings(repo))
+    }
+
+    static func planSettings(_ plan: JSONValue) -> PlanSettings {
+        PlanSettings(
+            id: plan["id"]?.string ?? "", repo: plan["repo"]?.string ?? "",
+            paths: plan["paths"]?.strings ?? [], excludes: plan["excludes"]?.strings ?? [],
             schedule: ScheduleSetting(plan["schedule"]), retention: RetentionSetting(plan["retention"]),
             skipIfUnchanged: plan["skipIfUnchanged"]?.bool ?? false)
+    }
 
+    static func repoSettings(_ repo: JSONValue) -> RepoSettings {
         let check = repo["checkPolicy"]
         let mode: CheckMode = check?["readDataSubsetPercent"]?.number.map { .readData(percent: $0) } ?? .structureOnly
-        let repoSettings = RepoSettings(
-            id: repoID, uri: repo["uri"]?.string ?? "",
+        return RepoSettings(
+            id: repo["id"]?.string ?? "", uri: repo["uri"]?.string ?? "",
             checkSchedule: ScheduleSetting(check?["schedule"]), checkMode: mode,
             pruneSchedule: ScheduleSetting(repo["prunePolicy"]?["schedule"]),
             pruneMaxUnusedPercent: repo["prunePolicy"]?["maxUnusedPercent"]?.number ?? 0,
             autoUnlock: repo["autoUnlock"]?.bool ?? false,
             env: repo["env"]?.strings ?? [])
-        return (settings, repoSettings)
     }
 
     /// `config` with the plan and repo replaced by these settings, everything
     /// else untouched, `modno` included: Backrest rejects a SetConfig whose
     /// modno is not the one it holds, so an edit made against a config that
     /// changed meanwhile fails instead of overwriting it.
+    ///
+    /// Only what differs from the document is written: Backrest leaves its
+    /// defaults out, and filling them in on a save that changed nothing
+    /// would rewrite settings nobody touched.
     public static func applied(_ plan: PlanSettings, _ repo: RepoSettings, to config: JSONValue) -> JSONValue {
         var config = config
         if var plans = config["plans"]?.array, let i = plans.firstIndex(where: { $0["id"]?.string == plan.id }) {
             var p = plans[i]
-            p["paths"] = .array(plan.paths.map(JSONValue.string))
-            p["excludes"] = .array(plan.excludes.map(JSONValue.string))
-            p["schedule"] = plan.schedule.json(keepingClock: p["schedule"])
-            p["retention"] = plan.retention.json
-            p["skipIfUnchanged"] = plan.skipIfUnchanged ? .bool(true) : nil
+            let old = planSettings(p)
+            if plan.paths != old.paths { p["paths"] = .array(plan.paths.map(JSONValue.string)) }
+            if plan.excludes != old.excludes { p["excludes"] = .array(plan.excludes.map(JSONValue.string)) }
+            if plan.schedule != old.schedule { p["schedule"] = plan.schedule.json(keepingClock: p["schedule"]) }
+            if plan.retention != old.retention { p["retention"] = plan.retention.json }
+            if plan.skipIfUnchanged != old.skipIfUnchanged { p["skipIfUnchanged"] = plan.skipIfUnchanged ? .bool(true) : nil }
             plans[i] = p
             config["plans"] = .array(plans)
         }
         if var repos = config["repos"]?.array, let i = repos.firstIndex(where: { $0["id"]?.string == repo.id }) {
             var r = repos[i]
-            var check = r["checkPolicy"] ?? .object([:])
-            check["schedule"] = repo.checkSchedule.json(keepingClock: check["schedule"])
-            switch repo.checkMode {
-            case .structureOnly:
-                check["structureOnly"] = .bool(true)
-                check["readDataSubsetPercent"] = nil
-            case let .readData(pct):
-                check["structureOnly"] = nil
-                check["readDataSubsetPercent"] = .number(pct)
+            let old = repoSettings(r)
+            if repo.checkSchedule != old.checkSchedule || repo.checkMode != old.checkMode {
+                var check = r["checkPolicy"] ?? .object([:])
+                if repo.checkSchedule != old.checkSchedule {
+                    check["schedule"] = repo.checkSchedule.json(keepingClock: check["schedule"])
+                }
+                switch repo.checkMode {
+                case .structureOnly:
+                    check["structureOnly"] = .bool(true)
+                    check["readDataSubsetPercent"] = nil
+                case let .readData(pct):
+                    check["structureOnly"] = nil
+                    check["readDataSubsetPercent"] = .number(pct)
+                }
+                r["checkPolicy"] = check
             }
-            r["checkPolicy"] = check
-            var prune = r["prunePolicy"] ?? .object([:])
-            prune["schedule"] = repo.pruneSchedule.json(keepingClock: prune["schedule"])
-            prune["maxUnusedPercent"] = .number(repo.pruneMaxUnusedPercent)
-            r["prunePolicy"] = prune
-            r["autoUnlock"] = repo.autoUnlock ? .bool(true) : nil
-            r["env"] = repo.env.isEmpty && r["env"] == nil ? nil : .array(repo.env.map(JSONValue.string))
+            if repo.pruneSchedule != old.pruneSchedule || repo.pruneMaxUnusedPercent != old.pruneMaxUnusedPercent {
+                var prune = r["prunePolicy"] ?? .object([:])
+                if repo.pruneSchedule != old.pruneSchedule {
+                    prune["schedule"] = repo.pruneSchedule.json(keepingClock: prune["schedule"])
+                }
+                prune["maxUnusedPercent"] = .number(repo.pruneMaxUnusedPercent)
+                r["prunePolicy"] = prune
+            }
+            if repo.autoUnlock != old.autoUnlock { r["autoUnlock"] = repo.autoUnlock ? .bool(true) : nil }
+            if repo.env != old.env { r["env"] = .array(repo.env.map(JSONValue.string)) }
             repos[i] = r
             config["repos"] = .array(repos)
         }

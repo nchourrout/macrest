@@ -34,10 +34,10 @@ struct ScheduleView: View {
                         Text("Backups to keep")
                         Spacer()
                         Button("Time Machine Style") {
-                            plan.wrappedValue.retention = .buckets(TimeBuckets(hourly: 24, daily: 30, weekly: 52, monthly: 24))
+                            plan.wrappedValue.retention = .buckets(.timeMachine)
                         }
                         .controlSize(.small)
-                        .help("Hourly for a day, daily for a month, weekly for a year, monthly for two years")
+                        .help(TimeBuckets.timeMachineText)
                     }
                 } footer: {
                     Text(plan.wrappedValue.retention.summary + ". Older backups are removed after each backup; their space is recovered on the space recovery schedule in the Storage pane.")

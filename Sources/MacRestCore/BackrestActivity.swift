@@ -1,11 +1,10 @@
 import Foundation
 
-/// Backrest's oplog as the Backups window shows it: every operation, not only
-/// backups (`BackrestOperations` keeps backups alone for the panel's tally),
-/// grouped into flows. A flow is one execution: a scheduled backup brings its
+/// Backrest's oplog as Activity shows it: every operation, grouped into
+/// flows. A flow is one execution: a scheduled backup brings its
 /// snapshot indexing, its forget and the hooks that fired with it.
 public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
-    public enum Kind: String, Sendable, Equatable {
+    public enum Kind: Sendable, Equatable {
         case backup, forget, prune, check, indexSnapshot, restore, stats, hook, command, unknown
 
         public var title: String {
@@ -89,7 +88,6 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
     public var kind: Kind
     public var backup: BackupProgress?
     public var stats: Stats?
-    public var hookCondition: String?
     public var restoreTarget: String?
     /// A `RunCommand`'s restic arguments, and the log holding its output.
     public var command: String?
@@ -102,6 +100,21 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
 
     public var outcome: Outcome { Outcome(status) }
 
+    /// When it ended, or started while it has not.
+    public var finishedAt: Date { end ?? start }
+
+    /// Failed because the storage was locked. The word itself: "unlocked"
+    /// is not a lock.
+    public var failedOnLock: Bool {
+        outcome.severity == .error && (reason ?? "").range(of: #"\blocked\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// Finished before the last unlock: a failure then hit a lock that is
+    /// gone, so it is history, not a live problem.
+    public func predates(unlock unlockedAt: Date?) -> Bool {
+        unlockedAt.map { finishedAt < $0 } ?? false
+    }
+
     public enum Outcome: Sendable, Equatable {
         case success, warning, failed, cancelled, running, pending, unknown
 
@@ -109,16 +122,18 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
             switch status {
             case "STATUS_PENDING": self = .pending
             case "STATUS_INPROGRESS": self = .running
-            default:
-                switch RunOutcome(status) {
-                case .success: self = .success
-                case .warning: self = .warning
-                case .failed: self = .failed
-                case .cancelled: self = .cancelled
-                default: self = .unknown
-                }
+            case "STATUS_SUCCESS": self = .success
+            case "STATUS_WARNING": self = .warning
+            case "STATUS_ERROR": self = .failed
+            // Backrest reports a backup killed by sleep as cancelled, not as
+            // an error. It still backed nothing up, so it counts as a failure.
+            case "STATUS_USER_CANCELLED", "STATUS_SYSTEM_CANCELLED": self = .cancelled
+            default: self = .unknown
             }
         }
+
+        /// Queued or running: not finished yet.
+        public var isUnderway: Bool { self == .running || self == .pending }
 
         public var severity: Severity {
             switch self {
@@ -198,9 +213,6 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
             stats = Stats(totalSize: s?["totalSize"]?.int64,
                           uncompressedSize: s?["totalUncompressedSize"]?.int64,
                           snapshotCount: s?["snapshotCount"]?.int64)
-        case .hook:
-            let h = try? c.decode(JSONValue.self, forKey: .operationRunHook)
-            hookCondition = h?["condition"]?.string
         case .restore:
             let r = try? c.decode(JSONValue.self, forKey: .operationRestore)
             restoreTarget = r?["target"]?.string
@@ -215,7 +227,7 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
 
     /// Why it went wrong, in one line. restic's exit_error JSON is buried in
     /// Backrest's message after the command line, so its `message` is pulled
-    /// out when there is one; otherwise the panel's "Fatal:" extraction.
+    /// out when there is one; otherwise its "Fatal:" line.
     public var reason: String? {
         guard let message, outcome.severity != .ok else { return nil }
         return Activity.reason(from: message)
@@ -275,7 +287,7 @@ public struct ActivityFlow: Sendable, Identifiable, Equatable {
     /// The worst step: a backup that succeeded while its forget failed is a
     /// warning on the backup's row, not a clean one.
     public var severity: Severity {
-        steps.map(\.outcome.severity).max { $0.rank < $1.rank } ?? .ok
+        steps.map(\.outcome.severity).max() ?? .ok
     }
 
     /// Steps that went wrong, other than the primary.
@@ -328,7 +340,7 @@ public enum Activity {
     public static func latestStats(_ operations: [BackrestOperation]) -> (BackrestOperation.Stats, Date)? {
         operations.filter { $0.kind == .stats && $0.outcome == .success && $0.stats?.totalSize != nil }
             .max { $0.id < $1.id }
-            .map { ($0.stats!, $0.end ?? $0.start) }
+            .map { ($0.stats!, $0.finishedAt) }
     }
 
     static func reason(from message: String) -> String? {
@@ -376,7 +388,7 @@ public struct ActivityDay: Sendable, Identifiable, Equatable {
         if calendar.isDate(day, inSameDayAs: now) { return "Today" }
         if let y = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(day, inSameDayAs: y) { return "Yesterday" }
         let sameYear = calendar.component(.year, from: day) == calendar.component(.year, from: now)
-        return Format.date(day, sameYear ? "EEEE d MMMM" : "d MMMM yyyy")
+        return Format.date(day, sameYear ? "EEEE d MMMM" : "d MMMM yyyy", timeZone: calendar.timeZone)
     }
 }
 
@@ -387,11 +399,32 @@ extension Activity {
             .sorted { $0.day > $1.day }
     }
 
+    /// When the next run of `kind` is due, from the scheduled entries.
+    public static func next(_ kind: BackrestOperation.Kind, in scheduled: [BackrestOperation]) -> Date? {
+        scheduled.first { $0.kind == kind }?.start
+    }
+
+    /// Whether any maintenance job's last run failed on a lock since the last
+    /// unlock: cleanup, space recovery or verification, whichever hit it.
+    public static func blockedByLock(_ flows: [ActivityFlow], unlockedAt: Date?) -> Bool {
+        [BackrestOperation.Kind.forget, .prune, .check].contains { kind in
+            guard let last = lastFinished(kind, in: flows) else { return false }
+            return last.failedOnLock && !last.predates(unlock: unlockedAt)
+        }
+    }
+
+    /// The size check asked for at `since`, once it has finished: the newest
+    /// stats run started after it (a few seconds' slack for the two clocks).
+    public static func sizeCheck(after since: Date, in operations: [BackrestOperation]) -> BackrestOperation? {
+        operations.filter { $0.kind == .stats && !$0.outcome.isUnderway && $0.start >= since.addingTimeInterval(-5) }
+            .max { $0.id < $1.id }
+    }
+
     /// The newest finished run of one kind, anywhere in the log: a check or a
     /// prune is its own flow, a forget rides inside a backup's.
     public static func lastFinished(_ kind: BackrestOperation.Kind, in flows: [ActivityFlow]) -> BackrestOperation? {
         flows.flatMap(\.steps)
-            .filter { $0.kind == kind && $0.outcome != .running && $0.outcome != .pending }
+            .filter { $0.kind == kind && !$0.outcome.isUnderway }
             .max { $0.id < $1.id }
     }
 }
@@ -413,12 +446,10 @@ extension Activity {
     /// the last unlock does not count: the lock it hit is gone, and only the
     /// next run can say whether retention works again.
     public static func staleLock(in flows: [ActivityFlow], unlockedAt: Date?) -> StaleLock? {
-        func lockFailure(_ op: BackrestOperation) -> Bool {
-            op.outcome.severity == .error && (op.reason ?? "").contains("locked")
-        }
+        let lockFailure = { (op: BackrestOperation) in op.failedOnLock }
         let forgets = flows.flatMap(\.steps).filter { $0.kind == .forget }.sorted { $0.id > $1.id }
         guard let last = forgets.first, lockFailure(last), let reason = last.reason else { return nil }
-        if let unlockedAt, (last.end ?? last.start) < unlockedAt { return nil }
+        if last.predates(unlock: unlockedAt) { return nil }
         let streak = forgets.prefix(while: lockFailure).count
         return StaleLock(failedRuns: streak, coversWholeLog: streak == forgets.count, reason: reason)
     }
@@ -458,6 +489,6 @@ public struct SentRequests: Sendable, Equatable {
     /// A run of this kind was just asked for, is queued, or is running.
     public func isBusy(_ kind: BackrestOperation.Kind, flows: [ActivityFlow], now: Date) -> Bool {
         isSending(kind, now: now)
-            || flows.contains { $0.steps.contains { $0.kind == kind && ($0.outcome == .running || $0.outcome == .pending) } }
+            || flows.contains { $0.steps.contains { $0.kind == kind && $0.outcome.isUnderway } }
     }
 }

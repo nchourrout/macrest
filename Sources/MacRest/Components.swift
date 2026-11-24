@@ -2,16 +2,21 @@ import AppKit
 import MacRestCore
 import SwiftUI
 
+/// A line across the top of the window: what happened or what is wrong,
+/// with an action, a dismiss button, or neither.
 struct Banner: View {
     let text: String
     let severity: Severity
+    var symbol: String?
+    var action: (title: String, run: () -> Void)?
     let dismiss: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: severity == .error ? "xmark.octagon.fill" : severity == .ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+            Image(systemName: symbol ?? (severity == .error ? "xmark.octagon.fill" : severity == .ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"))
                 .foregroundStyle(severity == .ok ? Color.accentColor : Theme.color(severity))
             Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            if let action { Button(action.title, action: action.run) }
             if let dismiss {
                 Button(action: dismiss) { Image(systemName: "xmark") }.buttonStyle(.borderless)
                     .help("Dismiss").accessibilityLabel("Dismiss")
@@ -304,19 +309,33 @@ struct FullDiskAccessRow: View {
 
 /// A warning that asks for one thing: what is wrong, and the button to fix it.
 struct NoticeRow: View {
-    let symbol: String
+    var symbol: String?
+    var tint = Theme.warning
     let text: String
     let button: String
+    var disabled = false
     let action: () -> Void
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Image(systemName: symbol).foregroundStyle(Theme.warning)
+            if let symbol { Image(systemName: symbol).foregroundStyle(tint) }
             Text(text)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button(button, action: action)
+            Button(button, action: action).disabled(disabled)
         }
+    }
+}
+
+/// The eye that shows or hides a password.
+struct RevealButton: View {
+    @Binding var revealed: Bool
+
+    var body: some View {
+        Button { revealed.toggle() } label: { Image(systemName: revealed ? "eye.slash" : "eye") }
+            .buttonStyle(.borderless)
+            .help(revealed ? "Hide Password" : "Show Password")
+            .accessibilityLabel(revealed ? "Hide Password" : "Show Password")
     }
 }
 

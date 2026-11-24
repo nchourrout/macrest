@@ -210,7 +210,7 @@ struct FlowRow: View {
                 // tag, not a red row: the backup itself is safe.
                 Image(systemName: op.kind.symbol)
                     .frame(width: 20)
-                    .foregroundStyle(op.outcome.severity == .ok ? Color.secondary : Theme.color(op.outcome.severity))
+                    .foregroundStyle(Theme.tint(op.outcome.severity))
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(op.kind.title).fontWeight(.medium)
@@ -247,7 +247,7 @@ struct FlowRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if let id = op.snapshotID {
                         LabeledContent("Backup ID") {
-                            Text(String(id.prefix(8))).font(.callout.monospaced()).textSelection(.enabled)
+                            Text(Snapshots.shortID(id)).font(.callout.monospaced()).textSelection(.enabled)
                         }
                     }
                     ForEach(flow.steps) { step in
@@ -300,7 +300,7 @@ struct Tag: View {
     let severity: Severity
 
     var body: some View {
-        let color = severity == .ok ? Color.secondary : Theme.color(severity)
+        let color = Theme.tint(severity)
         Text(text)
             .font(.caption.weight(.medium))
             .foregroundStyle(color)

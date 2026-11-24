@@ -31,9 +31,22 @@ import Testing
         #expect(ex.contains("**/node_modules"))
         #expect(SetupDefaults.instanceID(from: "Alex's MacBook Pro") == "alex-s-macbook-pro")
         #expect(SetupDefaults.instanceID(from: "--") == "mac")
-        let pw = SetupDefaults.password()
-        #expect(pw.count == 32)
-        #expect(!pw.contains("l") && !pw.contains("0") && !pw.contains("O"))
+        // Accents fold to ASCII: the id goes into tags and file names.
+        #expect(SetupDefaults.instanceID(from: "Hélène’s MacBook") == "helene-s-macbook")
+        #expect(SetupDefaults.instanceID(from: "Mac de José") == "mac-de-jose")
+        #expect(SetupDefaults.instanceID(from: "Bjørn’s MacBook") == "bjorn-s-macbook")
+        #expect(SetupDefaults.instanceID(from: "Łukasz Mac") == "lukasz-mac")
+        let japanese = SetupDefaults.instanceID(from: "山田のMac")
+        #expect(japanese.allSatisfy(\.isASCII) && japanese != "mac" && japanese.hasSuffix("mac"))
+    }
+
+    @Test func startNeedsAPasswordAndAName() {
+        #expect(SetupDefaults.startBlocker(password: "", existing: false, instance: "mac") == "Enter the password.")
+        #expect(SetupDefaults.startBlocker(password: "short", existing: false, instance: "mac") == "The password needs at least 8 characters.")
+        // An existing storage's password is whatever it is.
+        #expect(SetupDefaults.startBlocker(password: "short", existing: true, instance: "mac") == nil)
+        #expect(SetupDefaults.startBlocker(password: "long enough", existing: false, instance: "") == "Enter a name for this Mac.")
+        #expect(SetupDefaults.startBlocker(password: "long enough", existing: false, instance: nil) == nil)
     }
 
     @Test func setupJSON() throws {
@@ -46,7 +59,35 @@ import Testing
         #expect(SetupDefaults.needsSetup(.object(["repos": .array([])])))
         // Read back by the settings editor without loss.
         let (p, r) = try #require(BackrestConfig.read(config))
-        #expect(p.retention == .buckets(TimeBuckets(hourly: 24, daily: 30, weekly: 52, monthly: 24)))
+        #expect(p.retention == .buckets(.timeMachine))
         #expect(r.checkMode == .readData(percent: 5))
     }
+
+    /// The exact JSON a setup sends, byte for byte: AddRepo rejects
+    /// `autoInitialize`, and the schedules and retention are the defaults
+    /// the README promises.
+    @Test func setupJSONIsPinned() throws {
+        let repo = SetupDefaults.repo(id: "main", uri: "s3:h/b", password: "pw", env: ["AWS_ACCESS_KEY_ID=k"],
+                                      flags: ["-o", "x"], autoUnlock: false)
+        #expect(repo["autoInitialize"] == nil)
+        let repoText = String(decoding: try sortedJSON(repo), as: UTF8.self)
+        #expect(repoText == #"{"autoUnlock":false,"checkPolicy":{"readDataSubsetPercent":5,"schedule":{"clock":"CLOCK_LAST_RUN_TIME","maxFrequencyDays":30}},"env":["AWS_ACCESS_KEY_ID=k"],"flags":["-o","x"],"id":"main","password":"pw","prunePolicy":{"maxUnusedPercent":10,"schedule":{"clock":"CLOCK_LAST_RUN_TIME","maxFrequencyDays":7}},"uri":"s3:h\/b"}"#)
+        let plan = SetupDefaults.plan(id: "home", repo: "main", paths: ["/Users/x"], excludes: ["a"], everyHours: 2)
+        let planText = String(decoding: try sortedJSON(plan), as: UTF8.self)
+        #expect(planText == #"{"backup_flags":["--exclude-caches"],"excludes":["a"],"id":"home","paths":["\/Users\/x"],"repo":"main","retention":{"policyTimeBucketed":{"daily":30,"hourly":24,"monthly":24,"weekly":52}},"schedule":{"clock":"CLOCK_LAST_RUN_TIME","maxFrequencyHours":2}}"#)
+    }
+
+    @Test func passwordAvoidsLookAlikes() {
+        // Every character of many passwords, so one look-alike slipping back
+        // in is caught rather than sampled.
+        let used = Set((0..<200).flatMap { _ in SetupDefaults.password() })
+        #expect(used.isSubset(of: Set("abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789")))
+        #expect(SetupDefaults.password().count == 32)
+    }
+}
+
+func sortedJSON(_ v: JSONValue) throws -> Data {
+    let e = JSONEncoder()
+    e.outputFormatting = .sortedKeys
+    return try e.encode(v)
 }

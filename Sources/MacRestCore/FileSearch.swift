@@ -27,7 +27,6 @@ public struct FileSearchResult: Sendable, Equatable {
     /// Backrest keeps the first 2 MB of a command's output: past that, the
     /// matches read so far are all there is.
     public var truncated: Bool
-    public var snapshotCount: Int
 }
 
 /// Search by name across backups: restic `find`, run by Backrest's
@@ -127,7 +126,7 @@ public enum FileSearch {
             if $0.lastSeen != $1.lastSeen { return $0.lastSeen > $1.lastSeen }
             return $0.path.localizedStandardCompare($1.path) == .orderedAscending
         }
-        return FileSearchResult(items: items, truncated: !complete, snapshotCount: snapshotTimes.count)
+        return FileSearchResult(items: items, truncated: !complete)
     }
 
     /// The top-level objects of the first JSON array in `text`, as strings,

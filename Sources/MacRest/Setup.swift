@@ -81,10 +81,7 @@ struct SetupView: View {
                     } else {
                         SecureField("Password", text: $password)
                     }
-                    Button { reveal.toggle() } label: { Image(systemName: reveal ? "eye.slash" : "eye") }
-                        .buttonStyle(.borderless)
-                        .help(reveal ? "Hide Password" : "Show Password")
-                        .accessibilityLabel(reveal ? "Hide Password" : "Show Password")
+                    RevealButton(revealed: $reveal)
                     if existing != true {
                         Button("Generate") { password = SetupDefaults.password(); reveal = true }
                     }
@@ -106,7 +103,7 @@ struct SetupView: View {
                     Text("Every 2 hours").tag(2)
                     Text("Every 4 hours").tag(4)
                 }
-                LabeledContent("Keep") { Text("Hourly for a day, daily for a month, weekly for a year, monthly for two years") }
+                LabeledContent("Keep") { Text(TimeBuckets.timeMachineText) }
                 Toggle("Clear leftover locks automatically", isOn: $autoUnlock)
             } header: {
                 Text("What and when")
@@ -116,11 +113,8 @@ struct SetupView: View {
             }
 
             SwiftUI.Section {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Mail, Messages, Safari, Contacts and browser profiles are only readable with Full Disk Access.")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Allow Full Disk Access…") { FullDiskAccess.open() }
-                }
+                NoticeRow(text: "Mail, Messages, Safari, Contacts and browser profiles are only readable with Full Disk Access.",
+                          button: "Allow Full Disk Access…") { FullDiskAccess.open() }
             } header: {
                 Text("Private data")
             } footer: {
@@ -154,10 +148,8 @@ struct SetupView: View {
     /// Why Start is greyed out, when the storage fields are complete: the
     /// minimum length guards a new password only, an existing one is what it is.
     private var startBlocker: String? {
-        if password.isEmpty { return "Enter the password." }
-        if existing != true && password.count < 8 { return "The password needs at least 8 characters." }
-        if !instanceIsSet && instance.isEmpty { return "Enter a name for this Mac." }
-        return nil
+        SetupDefaults.startBlocker(password: password, existing: existing == true,
+                                   instance: instanceIsSet ? nil : instance)
     }
 
     @ViewBuilder private var checkRow: some View {
@@ -292,8 +284,7 @@ struct StorageFields: View {
             case .other: other
             }
         }
-        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didMountNotification)) { _ in mounts += 1 }
-        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnmountNotification)) { _ in mounts += 1 }
+        .onReceive(Volumes.changes) { _ in mounts += 1 }
     }
 
     // MARK: Disk
@@ -440,17 +431,9 @@ struct TakeOverBanner: View {
     let takeOver: () -> Void
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "shippingbox").foregroundStyle(.secondary)
-            Text(label?.contains("brew") == true
-                 ? "Backrest is running from Homebrew. MacRest can run it itself, on the same settings and history."
-                 : "Backrest is running outside MacRest. MacRest can run it itself, on the same settings and history.")
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Take Over", action: takeOver)
-        }
-        .font(.callout)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.1))
+        Banner(text: label?.contains("brew") == true
+                   ? "Backrest is running from Homebrew. MacRest can run it itself, on the same settings and history."
+                   : "Backrest is running outside MacRest. MacRest can run it itself, on the same settings and history.",
+               severity: .ok, symbol: "shippingbox", action: ("Take Over", takeOver), dismiss: nil)
     }
 }

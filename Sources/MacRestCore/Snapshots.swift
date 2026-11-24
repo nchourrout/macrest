@@ -5,14 +5,11 @@ public struct ResticSnapshot: Decodable, Sendable, Identifiable, Equatable, Hash
     public var id: String
     public var time: Date
     public var paths: [String]
-    public var tags: [String]
     public var dataAdded: Int64?
-    public var filesChanged: Int64?
-    public var filesNew: Int64?
 
-    public var shortID: String { String(id.prefix(8)) }
+    public var shortID: String { Snapshots.shortID(id) }
 
-    enum CodingKeys: String, CodingKey { case id, unixTimeMs, paths, tags, summary }
+    enum CodingKeys: String, CodingKey { case id, unixTimeMs, paths, summary }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -20,11 +17,8 @@ public struct ResticSnapshot: Decodable, Sendable, Identifiable, Equatable, Hash
         let ms = (try? c.decode(LenientInt.self, forKey: .unixTimeMs))?.value ?? 0
         time = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
         paths = (try? c.decode([String].self, forKey: .paths)) ?? []
-        tags = (try? c.decode([String].self, forKey: .tags)) ?? []
         let summary = try? c.decode(JSONValue.self, forKey: .summary)
         dataAdded = summary?["dataAdded"]?.int64
-        filesChanged = summary?["filesChanged"]?.int64
-        filesNew = summary?["filesNew"]?.int64
     }
 }
 
@@ -112,10 +106,14 @@ public enum Snapshots {
         return candidate
     }
 
+    /// The first 8 characters, as restic prints a snapshot id.
+    public static func shortID(_ id: String) -> String { String(id.prefix(8)) }
+
     /// The folders from the snapshot root down to `path`, for a breadcrumb:
     /// "/Users/alex/dev" under root "/Users/alex" gives ["/Users/alex", "/Users/alex/dev"].
     public static func breadcrumb(_ path: String, root: String) -> [String] {
-        guard path.hasPrefix(root) else { return [root] }
+        let under = root.hasSuffix("/") ? root : root + "/"
+        guard path == root || path.hasPrefix(under) else { return [root] }
         var out = [root]
         var current = root
         for part in path.dropFirst(root.count).split(separator: "/") {

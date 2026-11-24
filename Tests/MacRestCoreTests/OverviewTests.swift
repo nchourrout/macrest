@@ -2,28 +2,60 @@ import Foundation
 import Testing
 @testable import MacRestCore
 
-/// Fixed clock: 2026-11-03 12:00:00 UTC.
-let now = Date(timeIntervalSince1970: 1_793_707_200)
-
-func op(_ id: Int, _ kind: String, _ status: String, hoursAgo: Double, flow: Int? = nil, message: String? = nil) -> String {
-    let start = Int64((now.timeIntervalSince1970 - hoursAgo * 3600) * 1000)
-    let msg = message.map { #","displayMessage":\#(String(decoding: try! JSONEncoder().encode($0), as: UTF8.self))"# } ?? ""
-    return #"{"id":"\#(id)","flowId":"\#(flow ?? id)","status":"\#(status)","unixTimeStartMs":"\#(start)","unixTimeEndMs":"\#(start + 60000)"\#(msg),"\#(kind)":{}}"#
-}
-
-func overview(_ ops: [String]) throws -> Overview {
-    let decoded = try Activity.decode(Data(#"{"operations":[\#(ops.joined(separator: ","))]}"#.utf8))
-    let (flows, scheduled) = Activity.flows(decoded, now: now)
-    return Overview.make(flows: flows, scheduled: scheduled, now: now, calendar: utc)
-}
-
-let utc: Calendar = {
-    var c = Calendar(identifier: .gregorian)
-    c.timeZone = TimeZone(identifier: "UTC")!
-    return c
-}()
-
 @Suite struct OverviewTests {
+    @Test func cancelledAndFailedBackups() throws {
+        let cancelled = try overview([op(1, "operationBackup", "STATUS_USER_CANCELLED", hoursAgo: 1)])
+        #expect(cancelled.title == "Last backup was cancelled")
+        #expect(cancelled.severity == .error)
+        // A failing cleanup does not soften a failed backup.
+        let failed = try overview([op(1, "operationBackup", "STATUS_ERROR", hoursAgo: 1),
+                                   op(2, "operationForget", "STATUS_ERROR", hoursAgo: 1, flow: 1, message: "locked")])
+        #expect(failed.severity == .error)
+        #expect(failed.title == "Last backup failed")
+    }
+
+    @Test func warningsBecomeAnErrorAtHalfFailures() throws {
+        // Since the last clean backup: one failure, two warnings. Under half.
+        let mostlyWarned = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 5),
+                                         op(2, "operationBackup", "STATUS_ERROR", hoursAgo: 4),
+                                         op(3, "operationBackup", "STATUS_WARNING", hoursAgo: 3),
+                                         op(4, "operationBackup", "STATUS_WARNING", hoursAgo: 2)])
+        #expect(mostlyWarned.severity == .warning)
+        // Exactly half: an error.
+        let half = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 4),
+                                 op(2, "operationBackup", "STATUS_ERROR", hoursAgo: 3),
+                                 op(3, "operationBackup", "STATUS_WARNING", hoursAgo: 2)])
+        #expect(half.severity == .error)
+    }
+
+    @Test func severalMaintenanceFailures() throws {
+        let o = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 2),
+                              op(2, "operationForget", "STATUS_ERROR", hoursAgo: 2, flow: 1, message: "locked"),
+                              op(3, "operationCheck", "STATUS_ERROR", hoursAgo: 3, message: "locked")])
+        #expect(o.severity == .warning)
+        #expect(o.title == "Maintenance is failing")
+        #expect(o.failingMaintenance == ["Cleanup", "Verification"])
+        // An unlock clears verification's failure too, not only cleanup's.
+        #expect(try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 2),
+                              op(3, "operationCheck", "STATUS_ERROR", hoursAgo: 3, message: "locked")],
+                             unlockedAt: now.addingTimeInterval(-600)).severity == .ok)
+    }
+
+    @Test func runningAndNext() throws {
+        let first = try overview([op(1, "operationBackup", "STATUS_INPROGRESS", hoursAgo: 0.1)])
+        #expect(first.title == "First backup running")
+        #expect(first.running)
+        let again = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 2),
+                                  op(2, "operationBackup", "STATUS_INPROGRESS", hoursAgo: 0.1)])
+        #expect(again.title == "Backing up")
+        // Next run on another day names the day.
+        let tomorrow = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 2),
+                                     op(2, "operationBackup", "STATUS_PENDING", hoursAgo: -26)])
+        #expect(tomorrow.subtitle.hasSuffix("next Wed 14:00"))
+        // Nothing older than the window counts as a run.
+        #expect(try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 24 * 20)]).days.allSatisfy { $0.total == 0 })
+    }
+
     @Test func healthy() throws {
         let o = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 2),
                               op(2, "operationBackup", "STATUS_PENDING", hoursAgo: -2)])
@@ -42,9 +74,9 @@ let utc: Calendar = {
         #expect(o.failingMaintenance == ["Cleanup"])
 
         // After an unlock, that failure no longer counts.
-        let decoded = try Activity.decode(Data(#"{"operations":[\#(op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 2)),\#(op(2, "operationForget", "STATUS_ERROR", hoursAgo: 2, flow: 1, message: "locked"))]}"#.utf8))
-        let (flows, scheduled) = Activity.flows(decoded, now: now)
-        let after = Overview.make(flows: flows, scheduled: scheduled, now: now, unlockedAt: now.addingTimeInterval(-600), calendar: utc)
+        let after = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 2),
+                                  op(2, "operationForget", "STATUS_ERROR", hoursAgo: 2, flow: 1, message: "locked")],
+                                 unlockedAt: now.addingTimeInterval(-600))
         #expect(after.severity == .ok)
         #expect(after.failingMaintenance.isEmpty)
     }
@@ -109,8 +141,9 @@ let utc: Calendar = {
         let e = try Snapshots.decodeEntries(Data(json.utf8), folder: "/Users/alex")
         #expect(e.map(\.name) == ["Zeta", "a.txt", "b.txt"])
         #expect(e[2].size == 7)
-        #expect(e[2].modified != nil)
-        #expect(e[1].modified != nil)
+        // Nanoseconds and a zone offset, read to the instant.
+        #expect(abs((e[2].modified?.timeIntervalSince1970 ?? 0) - 1_789_414_875.405_852) < 0.001)
+        #expect(e[1].modified == ISO8601DateFormatter().date(from: "2026-09-14T21:41:15Z"))
     }
 
     @Test func restoreTargetNeverCollides() {
@@ -120,11 +153,15 @@ let utc: Calendar = {
         let second = Snapshots.restoreTarget(for: "/Users/alex/dev/notes.md", snapshotTime: Date(timeIntervalSince1970: 0)) { taken.contains($0) }
         #expect(second == t + " 2")
         taken.insert(second)
+        #expect(Snapshots.restoreTarget(for: "/Users/alex/dev/notes.md", snapshotTime: Date(timeIntervalSince1970: 0)) { taken.contains($0) } == t + " 3")
     }
 
     @Test func breadcrumb() {
         #expect(Snapshots.breadcrumb("/Users/alex/dev/x", root: "/Users/alex") == ["/Users/alex", "/Users/alex/dev", "/Users/alex/dev/x"])
         #expect(Snapshots.breadcrumb("/Users/alex", root: "/Users/alex") == ["/Users/alex"])
+        // A sibling that merely starts with the root's name is not under it.
+        #expect(Snapshots.breadcrumb("/Users/alexander/x", root: "/Users/alex") == ["/Users/alex"])
+        #expect(Snapshots.breadcrumb("/Users/alex/x", root: "/") == ["/", "/Users", "/Users/alex", "/Users/alex/x"])
     }
 }
 
@@ -170,11 +207,5 @@ let utc: Calendar = {
         #expect(Format.failing(["Cleanup", "Verification"]) == "Cleanup and verification failed on their last runs.")
         #expect(Format.failing(["Cleanup", "Space recovery", "Verification"])
             == "Cleanup, space recovery and verification failed on their last runs.")
-    }
-}
-
-@Suite struct RetentionWordingTests {
-    @Test func latestOnlyIsNotHistory() {
-        #expect(RetentionSetting.buckets(TimeBuckets(keepLastN: 5)).summary == "Keeps the last 5 backups")
     }
 }
