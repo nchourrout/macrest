@@ -29,7 +29,7 @@ public struct StorageForm: Sendable, Equatable {
             case .s3: "AWS, Cloudflare R2, Wasabi, MinIO…"
             case .b2: "Backblaze's own API"
             case .rest: "restic's rest-server"
-            case .other: "Any restic repository URI"
+            case .other: "Any restic storage address"
             }
         }
 
@@ -168,7 +168,7 @@ public struct StorageForm: Sendable, Equatable {
             if trim(b2KeyID).isEmpty || trim(b2AppKey).isEmpty { return "Enter the key ID and the application key." }
             return nil
         case .rest: return trim(restURL).isEmpty ? "Enter the server's URL." : nil
-        case .other: return trim(rawURI).isEmpty ? "Enter the repository URI." : nil
+        case .other: return trim(rawURI).isEmpty ? "Enter the storage address." : nil
         }
     }
 
@@ -191,8 +191,8 @@ public enum Credential {
         case "AWS_DEFAULT_REGION": "Region"
         case "B2_ACCOUNT_ID": "Key ID"
         case "B2_ACCOUNT_KEY": "Application key"
-        case "RESTIC_REST_USERNAME": "User"
-        case "RESTIC_REST_PASSWORD": "Password"
+        case "RESTIC_REST_USERNAME": "Server user"
+        case "RESTIC_REST_PASSWORD": "Server password"
         default: key
         }
     }

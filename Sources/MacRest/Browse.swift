@@ -75,8 +75,8 @@ struct BrowseView: View {
         .onDisappear { spaceKey.stop() }
         .sheet(item: $restoring) { entry in
             RestoreSheet(entry: entry, snapshot: model.selectedSnapshot) { target in
-                lastTarget = target
-                Task { await model.restore(entry, to: target) }
+                lastTarget = nil
+                Task { if await model.restore(entry, to: target) { lastTarget = target } }
             }
         }
     }
@@ -88,9 +88,11 @@ struct BrowseView: View {
             HStack(spacing: 8) {
                 Button { step(older: true) } label: { Image(systemName: "chevron.backward") }
                     .help("Older backup")
+                    .accessibilityLabel("Older Backup")
                     .disabled(index.map { $0 >= model.snapshots.count - 1 } ?? true)
                 Button { step(older: false) } label: { Image(systemName: "chevron.forward") }
                     .help("Newer backup")
+                    .accessibilityLabel("Newer Backup")
                     .disabled(index.map { $0 == 0 } ?? true)
                 if let s = model.selectedSnapshot {
                     Text(s.time.activityLabel).font(.headline)
@@ -151,10 +153,10 @@ struct BrowseView: View {
                     detail: "Listing what is stored on \(model.storageName). The first time takes a moment.")
         } else if model.entriesLoading && model.entries.isEmpty {
             Loading(title: "Opening \((model.folder.map { ($0 as NSString).lastPathComponent }) ?? "folder")…",
-                    detail: "Reading it from the backup of \(model.selectedSnapshot?.time.activityLabel ?? "")")
+                    detail: "Reading it from the backup made \(model.selectedSnapshot?.time.inlineLabel ?? "").")
         } else if model.folderMissing {
             ContentUnavailableView("Not in this backup", systemImage: "folder.badge.questionmark",
-                                   description: Text("This folder did not exist yet, or was excluded, at \(model.selectedSnapshot?.time.activityLabel ?? "that time"). Pick a newer backup."))
+                                   description: Text("This folder did not exist, or was excluded, in the backup made \(model.selectedSnapshot?.time.inlineLabel ?? "then"). Pick another backup."))
         } else {
             Table(shown, selection: $selection) {
                 TableColumn("Name") { e in
@@ -428,7 +430,7 @@ struct RestoreSheet: View {
                 Image(nsImage: BrowseView.icon(for: entry)).resizable().frame(width: 40, height: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Restore \u{201C}\(entry.name)\u{201D}").font(.headline)
-                    Text("As it was \(snapshot?.time.activityLabel ?? "")").foregroundStyle(.secondary)
+                    Text("As it was \(snapshot?.time.inlineLabel ?? "")").foregroundStyle(.secondary)
                 }
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -491,9 +493,13 @@ struct RestoreStatus: View {
                 Button("Show in Finder") {
                     Finder.reveal(target)
                 }
-            case .failed, .cancelled:
+            case .cancelled:
+                Image(systemName: "xmark.circle").foregroundStyle(.secondary)
+                Text("Restore cancelled").foregroundStyle(.secondary)
+            case .failed:
                 Image(systemName: "xmark.octagon.fill").foregroundStyle(Theme.error)
-                Text("Restore failed: \(op?.reason ?? "see Activity")").foregroundStyle(Theme.error).lineLimit(1)
+                Text(op?.reason.map { "Restore failed: \($0)" } ?? "Restore failed. See Activity for details.")
+                    .foregroundStyle(Theme.error).lineLimit(1)
             default:
                 ProgressView().controlSize(.small)
                 Text("Restoring \((target as NSString).lastPathComponent)…").lineLimit(1).truncationMode(.middle)

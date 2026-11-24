@@ -122,7 +122,14 @@ final class AppModel {
             } else if stats == nil {
                 stats = rememberedStats()
             }
-            if let since = measuringSince, let at = stats?.1, at >= since { measuringSince = nil }
+            if let since = measuringSince, let at = stats?.1, at >= since { measuringSince = nil; measureError = nil }
+            // A size check that failed (storage offline) ends the wait too,
+            // and says why rather than fall back to an old figure in silence.
+            if let since = measuringSince,
+               let failed = ops.first(where: { $0.kind == .stats && $0.start >= since.addingTimeInterval(-5) && $0.outcome.severity == .error }) {
+                measuringSince = nil
+                measureError = failed.reason ?? "see Activity"
+            }
             overview = Overview.make(flows: flows, scheduled: scheduled, now: now, unlockedAt: unlockedAt)
             sent.settle(ops, now: now)
             if loadError != nil, config != nil { loadError = nil }
@@ -170,7 +177,7 @@ final class AppModel {
             // Most likely a modno mismatch: the config changed since it was
             // read. Reload the baseline but keep the edits, so saving again
             // applies them on top of the new version.
-            actionError = "Not saved: \(error.localizedDescription)"
+            actionError = "Not saved: \(error.localizedDescription). Your changes are kept: click Save to try again."
             if let fresh = try? await BackrestClient.getConfig() { adopt(fresh, keepingEdits: true) }
         }
     }
@@ -256,8 +263,12 @@ final class AppModel {
     private var measuringSince: Date?
     var measuring: Bool { measuringSince.map { Date().timeIntervalSince($0) < 180 } ?? false }
 
+    /// Why the last Measure failed, until the next one.
+    private(set) var measureError: String?
+
     func measure() async {
         measuringSince = Date()
+        measureError = nil
         await repoTask(.stats)
         if actionError != nil { measuringSince = nil }
     }
@@ -295,14 +306,21 @@ final class AppModel {
     func unlock() async {
         unlocking = true
         defer { unlocking = false }
+        let blocked = staleLock != nil
         await repoTask(.unlock)
         guard actionError == nil else { return }
+        // Nothing was failing on a lock: keep the earlier failures as they
+        // are rather than grey them as "before unlock".
+        guard blocked else {
+            notice = "Unlocked. No leftover lock was blocking maintenance, so nothing else changes."
+            return
+        }
         unlockedAt = Date()
         UserDefaults.standard.set(unlockedAt, forKey: "unlockedAt")
         await refreshActivity()
         let next = scheduled.first { $0.kind == .backup }?.start
         notice = "Unlocked. Cleanup, space recovery and verification can run again; cleanup next runs after the backup"
-            + (next.map { " at \($0.activityLabel)" } ?? "") + "."
+            + (next.map { " \($0.inlineLabel)" } ?? "") + "."
     }
 
     /// Retention, prune and check all need an exclusive lock, so a lock left
@@ -314,18 +332,23 @@ final class AppModel {
     /// first that can say whether it worked.
     var staleLock: StaleLock? { Activity.staleLock(in: flows, unlockedAt: unlockedAt) }
 
-    /// Sends a request; `kind` is the operation it starts in the oplog, if any.
-    private func perform(_ kind: BackrestOperation.Kind?, _ work: () async throws -> Void) async {
+    /// Sends a request; `kind` is the operation it starts in the oplog, if
+    /// any. Returns whether it was sent.
+    @discardableResult
+    private func perform(_ kind: BackrestOperation.Kind?, _ work: () async throws -> Void) async -> Bool {
         if let kind { sent.send(kind, at: Date()) }
+        var sentOK = true
         do {
             try await work()
             actionError = nil
         } catch {
             actionError = error.localizedDescription
             if let kind { sent.drop(kind) }
+            sentOK = false
         }
         await refreshActivity()
         wake()
+        return sentOK
     }
 
     // MARK: Recovery kit
@@ -604,9 +627,11 @@ final class AppModel {
 
     /// Restores `entry` from the selected snapshot into a new folder at
     /// `target`. Backrest runs it as an operation, so it shows in Activity.
-    func restore(_ entry: SnapshotEntry, to target: String) async {
-        guard let snapshot = selectedSnapshot, let plan = savedPlan else { return }
-        await perform(.restore) {
+    /// Returns whether Backrest took it: a refused restore never reaches the
+    /// oplog, so there is nothing to follow.
+    func restore(_ entry: SnapshotEntry, to target: String) async -> Bool {
+        guard let snapshot = selectedSnapshot, let plan = savedPlan else { return false }
+        return await perform(.restore) {
             try await BackrestClient.restore(repo: plan.repo, plan: plan.id, snapshot: snapshot.id, path: entry.path, target: target)
         }
     }

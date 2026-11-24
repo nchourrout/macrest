@@ -105,7 +105,7 @@ public enum RetentionSetting: Sendable, Equatable, Hashable {
         switch self {
         case .keepAll: "Keeps every backup"
         case let .lastN(n): "Keeps the last \(Format.plural(n, "backup"))"
-        case let .buckets(b): "Keeps about \(b.horizon) of history"
+        case let .buckets(b): b.horizon.hasPrefix("the last") ? "Keeps \(b.horizon)" : "Keeps about \(b.horizon) of history"
         }
     }
 }

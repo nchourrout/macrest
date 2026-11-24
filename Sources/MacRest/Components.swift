@@ -14,6 +14,7 @@ struct Banner: View {
             Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             if let dismiss {
                 Button(action: dismiss) { Image(systemName: "xmark") }.buttonStyle(.borderless)
+                    .help("Dismiss").accessibilityLabel("Dismiss")
             }
         }
         .font(.callout)
@@ -172,6 +173,17 @@ extension Date {
         let sameYear = cal.component(.year, from: self) == cal.component(.year, from: Date())
         return Format.date(self, sameYear ? "EEE d MMM HH:mm" : "d MMM yyyy HH:mm")
     }
+
+    /// The same moment inside a sentence: "today at 08:36", "on Mon 2 Nov at 08:36".
+    var inlineLabel: String {
+        let cal = Calendar.current
+        let time = " at " + Format.date(self, "HH:mm")
+        if cal.isDateInToday(self) { return "today" + time }
+        if cal.isDateInYesterday(self) { return "yesterday" + time }
+        if cal.isDateInTomorrow(self) { return "tomorrow" + time }
+        let sameYear = cal.component(.year, from: self) == cal.component(.year, from: Date())
+        return "on " + Format.date(self, sameYear ? "EEE d MMM" : "d MMM yyyy") + time
+    }
 }
 
 struct Chevron: View {
@@ -209,6 +221,8 @@ struct DaysChart: View {
                 }
             }
             .frame(height: height)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Last \(Overview.windowDays) days: \(overview.summary)")
             Group {
                 if let day = overview.days.first(where: { $0.start == hovered }) {
                     Text(Format.date(day.start, "EEE d MMM") + ": " + day.summary)
@@ -303,6 +317,34 @@ struct NoticeRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button(button, action: action)
         }
+    }
+}
+
+/// A copy button that says it copied: the clipboard shows nothing, so the
+/// button turns into "Copied" with a check for a moment. Its width holds
+/// whichever label is longer, so the row does not shift.
+struct CopyButton: View {
+    var title = "Copy"
+    var secret = false
+    let text: () -> String
+    @ViewState private var copiedAt: Date?
+
+    var body: some View {
+        Button {
+            Pasteboard.copy(text(), secret: secret)
+            let now = Date()
+            copiedAt = now
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.5))
+                if copiedAt == now { copiedAt = nil }
+            }
+        } label: {
+            ZStack {
+                Text(title).opacity(copiedAt == nil ? 1 : 0)
+                Label("Copied", systemImage: "checkmark").opacity(copiedAt == nil ? 0 : 1)
+            }
+        }
+        .accessibilityLabel(copiedAt == nil ? title : "Copied")
     }
 }
 

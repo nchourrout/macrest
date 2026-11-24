@@ -29,7 +29,7 @@ let utc: Calendar = {
                               op(2, "operationBackup", "STATUS_PENDING", hoursAgo: -2)])
         #expect(o.severity == .ok)
         #expect(o.title == "Backups healthy")
-        #expect(o.subtitle == "last backup 1h ago · next 14:00")
+        #expect(o.subtitle == "Last backup 1h ago · next 14:00")
         #expect(o.days.count == 14)
         #expect(o.days.last?.ok == 1)
     }
@@ -63,7 +63,7 @@ let utc: Calendar = {
                                     op(3, "operationBackup", "STATUS_ERROR", hoursAgo: 7),
                                     op(4, "operationBackup", "STATUS_WARNING", hoursAgo: 6)])
         #expect(chronic.severity == .error)
-        #expect(chronic.title == "Last backup warned")
+        #expect(chronic.title == "Last backup had warnings")
     }
 
     @Test func unreachableStorageIsMissedNotFailed() throws {
@@ -73,7 +73,7 @@ let utc: Calendar = {
                               op(3, "operationBackup", "STATUS_ERROR", hoursAgo: 1, message: sftp)])
         #expect(o.severity == .ok)
         #expect(o.title == "Backups healthy")
-        #expect(o.subtitle.hasPrefix("last backup 5h ago · storage unreachable"))
+        #expect(o.subtitle.hasPrefix("Last backup 5h ago · storage unreachable"))
         #expect(o.failed == 0)
         #expect(o.missed == 2)
         #expect(o.summary == "1 ok · 0 failed · 2 missed")
@@ -88,7 +88,7 @@ let utc: Calendar = {
         let gone = try overview([op(1, "operationBackup", "STATUS_ERROR", hoursAgo: 50, message: sftp),
                                  op(2, "operationBackup", "STATUS_ERROR", hoursAgo: 1, message: sftp)])
         #expect(gone.title == "Backups have stopped")
-        #expect(gone.subtitle.hasPrefix("last try "))
+        #expect(gone.subtitle.hasPrefix("Last try "))
         // Any other failure stays a failure.
         let broken = try overview([op(1, "operationBackup", "STATUS_SUCCESS", hoursAgo: 6),
                                    op(2, "operationBackup", "STATUS_ERROR", hoursAgo: 1, message: "Fatal: wrong password or no key found")])
@@ -159,6 +159,22 @@ let utc: Calendar = {
         #expect(o.privateFoldersSkipped == 2)
         #expect(o.days.last?.summary == "1 warned, 2 missed · 2× Storage unreachable · 2 private folders skipped, no Full Disk Access")
         #expect(o.days.first?.summary == "no backup")
-        #expect(o.title == "Last backup warned")
+        #expect(o.title == "Last backup had warnings")
+    }
+}
+
+@Suite struct WordingTests {
+    @Test func failingMaintenanceReadsAsASentence() {
+        #expect(Format.failing([]) == "")
+        #expect(Format.failing(["Cleanup"]) == "Cleanup failed on its last run.")
+        #expect(Format.failing(["Cleanup", "Verification"]) == "Cleanup and verification failed on their last runs.")
+        #expect(Format.failing(["Cleanup", "Space recovery", "Verification"])
+            == "Cleanup, space recovery and verification failed on their last runs.")
+    }
+}
+
+@Suite struct RetentionWordingTests {
+    @Test func latestOnlyIsNotHistory() {
+        #expect(RetentionSetting.buckets(TimeBuckets(keepLastN: 5)).summary == "Keeps the last 5 backups")
     }
 }

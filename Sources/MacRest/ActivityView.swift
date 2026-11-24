@@ -31,7 +31,7 @@ struct ActivityView: View {
             }
             if let lock = model.staleLock {
                 SwiftUI.Section {
-                    StaleLockRow(count: lock.failedRuns, all: lock.coversWholeLog, reason: lock.reason) { Task { await model.unlock() } }
+                    StaleLockRow(count: lock.failedRuns, all: lock.coversWholeLog, reason: lock.reason, unlocking: model.unlocking) { Task { await model.unlock() } }
                 }
             }
             if let skipped = model.overview?.privateFoldersSkipped, skipped > 0 {
@@ -50,7 +50,7 @@ struct ActivityView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 if days.isEmpty {
-                    Text(filter == .problems ? "No problems in the recent log." : "Nothing in the log yet.")
+                    Text(filter == .problems ? "No problems in the recent log." : filter == .backups ? "No backups in the recent log." : "Nothing in the log yet.")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -98,7 +98,7 @@ struct OverviewCard: View {
                     if let size = stats?.totalSize {
                         VStack(alignment: .trailing, spacing: 2) {
                             Text(Format.size(size)).font(.title3.weight(.semibold)).monospacedDigit()
-                            Text(stats?.snapshotCount.map { "\($0) snapshots" } ?? "stored").foregroundStyle(.secondary)
+                            Text(stats?.snapshotCount.map { Format.plural(Int($0), "backup") } ?? "stored").foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -129,6 +129,7 @@ struct StaleLockRow: View {
     /// back further than the log does.
     let all: Bool
     let reason: String
+    let unlocking: Bool
     let unlock: () -> Void
 
     var body: some View {
@@ -149,7 +150,7 @@ struct StaleLockRow: View {
             }
             .help(reason)
             Spacer()
-            Button("Unlock", action: unlock).buttonStyle(.borderedProminent)
+            Button(unlocking ? "Unlocking…" : "Unlock", action: unlock).buttonStyle(.borderedProminent).disabled(unlocking)
         }
         .padding(.vertical, 6)
     }
@@ -237,6 +238,10 @@ struct FlowRow: View {
             }
             .contentShape(Rectangle())
             .onTapGesture(perform: toggle)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityAction { toggle() }
 
             if expanded {
                 VStack(alignment: .leading, spacing: 4) {
@@ -280,7 +285,7 @@ struct FlowRow: View {
             return parts.joined(separator: " · ")
         case .stats:
             guard let s = op.stats, let size = s.totalSize else { return nil }
-            return "\(Format.size(size)) stored" + (s.snapshotCount.map { " · \($0) snapshots" } ?? "")
+            return "\(Format.size(size)) stored" + (s.snapshotCount.map { " · " + Format.plural(Int($0), "backup") } ?? "")
         case .restore:
             return op.restoreTarget.map { "to \($0)" }
         default:
@@ -316,7 +321,7 @@ struct LogSheet: View {
             HStack {
                 Text("\(op.kind.title) · \(op.start.activityLabel)").font(.headline)
                 Spacer()
-                Button("Copy") { Pasteboard.copy(text ?? "") }
+                CopyButton { text ?? "" }
                 .disabled(text == nil)
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }

@@ -66,7 +66,7 @@ public struct RecoveryKit: Sendable, Equatable {
         if !options.isEmpty {
             steps.append("The options name files on this Mac, such as its ssh key. On another Mac, sign in to the server with your own ssh setup instead.")
         }
-        steps.append("Without MacRest, restic opens them too: restic -r \(storage) snapshots")
+        steps.append("Without MacRest, the free restic tool opens them too: set the credentials above as environment variables, run restic -r \(storage) snapshots and enter the password.")
         return steps.enumerated().map { "\($0.offset + 1). \($0.element)" }
     }
 

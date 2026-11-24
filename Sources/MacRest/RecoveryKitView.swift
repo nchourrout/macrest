@@ -40,7 +40,7 @@ struct RecoveryKitSheet: View {
                 HStack {
                     Button("Print…") { KitPrinter.print(kit) }
                         .help("Print it, or choose Save as PDF in the print panel")
-                    Button("Copy All") { Pasteboard.copy(kit.text(printed: Date()), secret: true) }
+                    CopyButton(title: "Copy All", secret: true) { kit.text(printed: Date()) }
                         .help("Copy the kit as text, to paste into a password manager")
                     Spacer()
                     Button("Close", role: .cancel) { dismiss() }

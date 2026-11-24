@@ -101,6 +101,7 @@ struct MainWindow: View {
                 Button("Refresh") { Task { await model.reload() } }
                 Divider()
                 Button("Restart Backup Engine") { Task { await EngineService.shared.restart(); await model.reload() } }
+                    .disabled(!EngineService.shared.canRestart)
                 Button("Open Backrest Web Interface") { NSWorkspace.shared.open(URL(string: Links.backrestURL)!) }
                 Divider()
                 Toggle("Open at Login", isOn: Binding(get: { AppDelegate.opensAtLogin },

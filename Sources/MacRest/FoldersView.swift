@@ -19,6 +19,7 @@ struct FoldersView: View {
                             Button { plan.wrappedValue.paths.remove(at: i) } label: { Image(systemName: "minus.circle") }
                                 .buttonStyle(.borderless)
                                 .help("Stop backing up this folder")
+                                .accessibilityLabel("Remove Folder")
                         }
                     }
                     Button("Add Folder…") { addFolder(plan) }
@@ -39,6 +40,8 @@ struct FoldersView: View {
                             Spacer()
                             Button { plan.wrappedValue.excludes.remove(at: i) } label: { Image(systemName: "minus.circle") }
                                 .buttonStyle(.borderless)
+                                .help("Stop excluding this pattern")
+                                .accessibilityLabel("Remove Pattern")
                         }
                     }
                 } header: {
@@ -50,7 +53,7 @@ struct FoldersView: View {
                             .frame(width: 180)
                     }
                 } footer: {
-                    Text("Patterns: a pattern starting with / is a path; **/name matches that name at any depth. Folders tagged with CACHEDIR.TAG are skipped too.")
+                    Text("A pattern starting with / or ~/ is a full path; **/name matches that name at any depth. Folders containing a CACHEDIR.TAG file are skipped too.")
                 }
             }
             .formStyle(.grouped)
@@ -69,9 +72,11 @@ struct FoldersView: View {
         var p = newExclude.trimmingCharacters(in: .whitespaces)
         // restic does not expand a tilde; the list holds absolute paths.
         if p.hasPrefix("~/") { p = FileManager.default.homeDirectoryForCurrentUser.path + p.dropFirst(1) }
-        guard !p.isEmpty, !plan.wrappedValue.excludes.contains(p) else { return }
-        plan.wrappedValue.excludes.insert(p, at: 0)
+        guard !p.isEmpty else { return }
         newExclude = ""
+        // Already there: show it instead of doing nothing.
+        guard !plan.wrappedValue.excludes.contains(p) else { filter = p; return }
+        plan.wrappedValue.excludes.insert(p, at: 0)
     }
 
     private func addFolder(_ plan: Binding<PlanSettings>) {

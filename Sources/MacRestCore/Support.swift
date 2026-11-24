@@ -140,6 +140,16 @@ public enum Format {
     public static func plural(_ n: Int, _ word: String) -> String {
         "\(n) \(word)\(n == 1 ? "" : "s")"
     }
+
+    /// "Cleanup failed on its last run.", or for several kinds of run
+    /// "Cleanup and verification failed on their last runs."
+    public static func failing(_ titles: [String]) -> String {
+        guard let first = titles.first else { return "" }
+        guard titles.count > 1 else { return "\(first) failed on its last run." }
+        let rest = titles.dropFirst().map { $0.lowercased() }
+        let list = ([first] + rest.dropLast()).joined(separator: ", ") + " and " + rest.last!
+        return "\(list) failed on their last runs."
+    }
 }
 
 private final class FormatterCache: @unchecked Sendable {

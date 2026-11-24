@@ -125,8 +125,8 @@ public struct Overview: Sendable, Equatable {
                 o.severity = .unknown
                 o.title = "No backups yet"
             }
-            o.subtitle = (finished.first.map { "last try " + Format.ago(Int(now.timeIntervalSince($0.end ?? $0.start))) }
-                          ?? "never run") + nextText
+            o.subtitle = (finished.first.map { "Last try " + Format.ago(Int(now.timeIntervalSince($0.end ?? $0.start))) }
+                          ?? "Never run") + nextText
             return o
         }
         o.privateFoldersSkipped = last.backup?.permissionDenied ?? 0
@@ -134,7 +134,7 @@ public struct Overview: Sendable, Equatable {
         // The newest attempt missed the storage: say so, the verdict still
         // stands on the last run that reached it.
         let missedSince = finished.first?.storageUnreachable == true ? " · storage unreachable" : ""
-        o.subtitle = "last backup " + Format.ago(Int(age)) + missedSince + nextText
+        o.subtitle = "Last backup " + Format.ago(Int(age)) + missedSince + nextText
 
         if age > staleHours * 3600 {
             o.severity = .error
@@ -152,7 +152,7 @@ public struct Overview: Sendable, Equatable {
             let sinceClean = reached.prefix { $0.outcome != .success }
             let failures = sinceClean.filter { $0.outcome.severity == .error }.count
             o.severity = failures * 100 >= errorPct * sinceClean.count ? .error : .warning
-            o.title = "Last backup warned"
+            o.title = "Last backup had warnings"
         default:
             o.title = running ? "Backing up" : "Backups healthy"
         }

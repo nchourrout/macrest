@@ -91,7 +91,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor static var opensAtLogin: Bool {
         get { SMAppService.mainApp.status == .enabled }
-        set { newValue ? try? SMAppService.mainApp.register() : try? SMAppService.mainApp.unregister() }
+        set {
+            guard newValue else { try? SMAppService.mainApp.unregister(); return }
+            // macOS may hold it for approval: show where to give it rather
+            // than leave the toggle off with no reason.
+            try? SMAppService.mainApp.register()
+            if SMAppService.mainApp.status != .enabled { SMAppService.openSystemSettingsLoginItems() }
+        }
     }
 
     /// A Dock icon while the window is open, or always when there is no menu
@@ -185,22 +191,36 @@ struct MenuPanel: View {
                 .font(.callout)
             }
 
-            if model.staleLock != nil {
+            if let error = model.actionError {
+                // The window banner is not there while only the panel is.
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: "xmark.octagon.fill").foregroundStyle(Theme.error)
+                    Text(error).font(.callout).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Dismiss") { model.dismissError() }.controlSize(.small)
+                }
+            } else if model.staleLock != nil {
                 HStack(alignment: .firstTextBaseline) {
                     Image(systemName: "lock.trianglebadge.exclamationmark").foregroundStyle(Theme.error)
                     Text("A leftover lock is stopping old backups from being removed.")
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Unlock") { Task { await model.unlock() } }.controlSize(.small)
+                    Button(model.unlocking ? "Unlocking…" : "Unlock") { Task { await model.unlock() } }
+                        .controlSize(.small).disabled(model.unlocking)
                 }
             } else if let notice = model.notice {
-                Label(notice, systemImage: "checkmark.circle").font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .firstTextBaseline) {
+                    Label(notice, systemImage: "checkmark.circle").font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("OK") { model.dismissNotice() }.controlSize(.small)
+                }
             } else if let skipped = model.overview?.privateFoldersSkipped, skipped > 0 {
                 FullDiskAccessRow(skipped: skipped).font(.callout).controlSize(.small)
             } else if let o = model.overview, !o.failingMaintenance.isEmpty {
-                Label("\(o.failingMaintenance.joined(separator: ", ")) failed on its last run.", systemImage: "exclamationmark.triangle")
+                Label(Format.failing(o.failingMaintenance), systemImage: "exclamationmark.triangle")
                     .font(.callout)
                     .foregroundStyle(Theme.warning)
             }

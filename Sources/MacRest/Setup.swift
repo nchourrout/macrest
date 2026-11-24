@@ -50,6 +50,7 @@ struct SetupView: View {
     @ViewState private var everyHours = 1
     @ViewState private var autoUnlock = true
     @ViewState private var working = false
+    @ViewState private var testing = false
     @ViewState private var error: String?
     @ViewState private var publicKey: String?
 
@@ -82,11 +83,12 @@ struct SetupView: View {
                     }
                     Button { reveal.toggle() } label: { Image(systemName: reveal ? "eye.slash" : "eye") }
                         .buttonStyle(.borderless)
-                        .help(reveal ? "Hide" : "Show")
+                        .help(reveal ? "Hide Password" : "Show Password")
+                        .accessibilityLabel(reveal ? "Hide Password" : "Show Password")
                     if existing != true {
                         Button("Generate") { password = SetupDefaults.password(); reveal = true }
                     }
-                    Button("Copy") { Pasteboard.copy(password) }
+                    CopyButton(secret: true) { password }
                 }
             } header: {
                 Text(existing == true ? "Password of the existing backups" : "Encryption password")
@@ -104,7 +106,7 @@ struct SetupView: View {
                     Text("Every 2 hours").tag(2)
                     Text("Every 4 hours").tag(4)
                 }
-                LabeledContent("Keep") { Text("Hourly for a day, daily for a month, weekly for a year, monthly for two") }
+                LabeledContent("Keep") { Text("Hourly for a day, daily for a month, weekly for a year, monthly for two years") }
                 Toggle("Clear leftover locks automatically", isOn: $autoUnlock)
             } header: {
                 Text("What and when")
@@ -130,17 +132,32 @@ struct SetupView: View {
                     Text(error).foregroundStyle(Theme.error).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
                 HStack {
-                    if working { ProgressView().controlSize(.small) }
+                    if working {
+                        ProgressView().controlSize(.small)
+                        Text(existing == true ? "Connecting to the backups…" : "Setting up the storage…")
+                            .font(.callout).foregroundStyle(.secondary)
+                    } else if form.missing == nil, let blocker = startBlocker {
+                        Text(blocker).font(.callout).foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Button(existing == true ? "Connect and Back Up" : "Start Backing Up") { Task { await start() } }
                         .buttonStyle(.borderedProminent)
-                        .disabled(form.missing != nil || password.count < 8 || working || (!instanceIsSet && instance.isEmpty))
+                        .disabled(form.missing != nil || startBlocker != nil || working || testing)
                 }
             }
         }
         .formStyle(.grouped)
         .onChange(of: form.uri) { probe = nil; existing = nil }
         .onChange(of: form.kind) { error = nil; publicKey = nil }
+    }
+
+    /// Why Start is greyed out, when the storage fields are complete: the
+    /// minimum length guards a new password only, an existing one is what it is.
+    private var startBlocker: String? {
+        if password.isEmpty { return "Enter the password." }
+        if existing != true && password.count < 8 { return "The password needs at least 8 characters." }
+        if !instanceIsSet && instance.isEmpty { return "Enter a name for this Mac." }
+        return nil
     }
 
     @ViewBuilder private var checkRow: some View {
@@ -157,13 +174,14 @@ struct SetupView: View {
                     .textSelection(.enabled)
             }
             Spacer()
-            Button("Test Connection") { Task { await check() } }.disabled(form.missing != nil || working)
+            if testing { ProgressView().controlSize(.small) }
+            Button("Test Connection") { Task { await check() } }.disabled(form.missing != nil || working || testing)
         }
     }
 
     private func check() async {
-        working = true
-        defer { working = false }
+        testing = true
+        defer { testing = false }
         do {
             try await model.ensureInstance(instance)
             let p = try await BackrestClient.checkRepoExists(SetupDefaults.repo(
@@ -260,16 +278,22 @@ struct StorageFields: View {
     let instance: String
     @ViewState private var keyWorking = false
     @ViewState private var keyError: String?
+    /// Bumped when a disk is plugged in or out, so the list follows.
+    @ViewState private var mounts = 0
 
     var body: some View {
-        switch form.kind {
-        case .disk: disk
-        case .sftp: sftp
-        case .s3: s3
-        case .b2: b2
-        case .rest: rest
-        case .other: other
+        Group {
+            switch form.kind {
+            case .disk: disk.id(mounts)
+            case .sftp: sftp
+            case .s3: s3
+            case .b2: b2
+            case .rest: rest
+            case .other: other
+            }
         }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didMountNotification)) { _ in mounts += 1 }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnmountNotification)) { _ in mounts += 1 }
     }
 
     // MARK: Disk
@@ -336,7 +360,7 @@ struct StorageFields: View {
                         .padding(8).frame(maxWidth: .infinity, alignment: .leading)
                         .background(Theme.track, in: RoundedRectangle(cornerRadius: 6))
                     HStack {
-                        Button("Copy Key") { Pasteboard.copy(publicKey) }
+                        CopyButton(title: "Copy Key") { publicKey }
                         if let command = form.copyKeyCommand {
                             Button("Add to Server in Terminal…") { Terminal.run(command) }
                         }
@@ -349,8 +373,9 @@ struct StorageFields: View {
                     .font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 if keyWorking { ProgressView().controlSize(.small) }
-                Button(form.identityFile.isEmpty ? "Create Key" : "Create Again") { Task { await createKey() } }
+                Button(form.identityFile.isEmpty ? "Create Key" : "Create New Key") { Task { await createKey() } }
                     .disabled(form.host.isEmpty || keyWorking)
+                    .help(form.identityFile.isEmpty ? "Make a key for MacRest to sign in to the server with" : "Make a new key; add it to the server again")
             }
         }
     }
@@ -393,12 +418,12 @@ struct StorageFields: View {
 
     @ViewBuilder private var rest: some View {
         TextField("Server URL", text: $form.restURL, prompt: Text("https://backup.example.com:8000/\(instance)"))
-        TextField("User", text: $form.restUser, prompt: Text("optional"))
-        SecureField("Password", text: $form.restPassword, prompt: Text("optional"))
+        TextField("Server user", text: $form.restUser, prompt: Text("optional"))
+        SecureField("Server password", text: $form.restPassword, prompt: Text("optional"))
     }
 
     @ViewBuilder private var other: some View {
-        TextField("Repository URI", text: $form.rawURI, prompt: Text("azure:container:/path, gs:bucket:/path, rclone:remote:path…"))
+        TextField("Storage address (restic URI)", text: $form.rawURI, prompt: Text("azure:container:/path, gs:bucket:/path, rclone:remote:path…"))
         VStack(alignment: .leading, spacing: 4) {
             Text("Credentials, one KEY=value per line").font(.callout)
             TextEditor(text: $form.rawEnv).font(.callout.monospaced()).frame(minHeight: 60)
