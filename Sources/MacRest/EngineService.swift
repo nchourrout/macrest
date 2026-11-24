@@ -92,19 +92,32 @@ final class EngineService {
         // `brew services stop` unloads it and removes its plist, so it does
         // not come back at the next login; bootout covers a machine without brew.
         if let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: FileManager.default.isExecutableFile) {
-            await run(brew, ["services", "stop", "backrest"])
+            await Self.run(brew, ["services", "stop", "backrest"])
         }
         for label in EngineAgent.homebrewLabels where await isLoaded(label) {
-            await run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
+            await Self.run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
         }
         // The port has to be free before ours binds it.
         for _ in 0..<50 where await answers() { try? await Task.sleep(for: .milliseconds(200)) }
         await install()
     }
 
+    /// Whether MacRest runs the engine, so Restart is its to do: a Backrest
+    /// started elsewhere (Homebrew, a demo URL) is left alone, or installing
+    /// ours beside it would crash-loop on the busy port.
+    var canRestart: Bool {
+        guard !Links.usesExternalBackrest else { return false }
+        switch state {
+        case .running, .failed: return true
+        case .checking, .external, .installing: return false
+        }
+    }
+
     func restart() async {
+        guard canRestart else { return }
+        state = .installing("Restarting the backup engine…")
         guard await isLoaded(EngineAgent.label) else { await install(); return }
-        await run("/bin/launchctl", ["kickstart", "-k", "gui/\(uid)/\(EngineAgent.label)"])
+        await Self.run("/bin/launchctl", ["kickstart", "-k", "gui/\(uid)/\(EngineAgent.label)"])
         await waitUntilAnswering()
     }
 
@@ -116,7 +129,7 @@ final class EngineService {
                 state = .installing("Downloading Backrest \(BackrestRelease.version)…")
                 try await Self.download(to: paths.binary)
             }
-            state = .installing("Starting Backrest…")
+            state = .installing("Starting the backup engine…")
             try await writeAgent()
             await waitUntilAnswering()
         } catch {
@@ -129,7 +142,7 @@ final class EngineService {
     nonisolated private static func download(to binary: String) async throws {
         guard let expected = BackrestRelease.checksum() else { throw Failure("No Backrest build for \(BackrestRelease.arch).") }
         let (file, response) = try await URLSession.shared.download(from: BackrestRelease.url())
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw Failure("The Backrest download failed.") }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw Failure("The backup engine could not be downloaded. Check the internet connection and try again.") }
         let data = try Data(contentsOf: file)
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         guard digest == expected else {
@@ -140,9 +153,9 @@ final class EngineService {
         defer { try? FileManager.default.removeItem(at: work) }
         let archive = work.appending(path: BackrestRelease.asset())
         try data.write(to: archive)
-        guard await run("/usr/bin/tar", ["-xzf", archive.path, "-C", work.path]) == 0,
+        guard await Self.run("/usr/bin/tar", ["-xzf", archive.path, "-C", work.path]) == 0,
               FileManager.default.fileExists(atPath: work.appending(path: "backrest").path)
-        else { throw Failure("Could not unpack the Backrest download.") }
+        else { throw Failure("Could not unpack the backup engine download.") }
 
         let dir = (binary as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -176,9 +189,9 @@ final class EngineService {
         }
         try EngineAgent.plistData(paths).write(to: URL(fileURLWithPath: agentPlist), options: .atomic)
         // Reload so a changed binary path or environment takes effect.
-        if await isLoaded(EngineAgent.label) { await run("/bin/launchctl", ["bootout", "gui/\(uid)/\(EngineAgent.label)"]) }
-        guard await run("/bin/launchctl", ["bootstrap", "gui/\(uid)", agentPlist]) == 0 else {
-            throw Failure("launchd refused the Backrest service. Check Login Items in System Settings.")
+        if await isLoaded(EngineAgent.label) { await Self.run("/bin/launchctl", ["bootout", "gui/\(uid)/\(EngineAgent.label)"]) }
+        guard await Self.run("/bin/launchctl", ["bootstrap", "gui/\(uid)", agentPlist]) == 0 else {
+            throw Failure("macOS would not start the backup engine. Check that MacRest is allowed in System Settings > General > Login Items.")
         }
     }
 
@@ -187,7 +200,7 @@ final class EngineService {
             if await answers() { state = .running; return }
             try? await Task.sleep(for: .milliseconds(200))
         }
-        state = .failed("Backrest did not start. Its log is at \(paths.log).")
+        state = .failed("The backup engine did not start. Its log is at \(paths.log).")
     }
 
     // MARK: Probes
@@ -200,11 +213,6 @@ final class EngineService {
 
     private func isLoaded(_ label: String) async -> Bool {
         await Self.run("/bin/launchctl", ["print", "gui/\(uid)/\(label)"], quiet: true) == 0
-    }
-
-    @discardableResult
-    private func run(_ tool: String, _ args: [String]) async -> Int32 {
-        await Self.run(tool, args)
     }
 
     /// A tool run to completion off the main actor, so a slow one (`brew
@@ -226,11 +234,5 @@ final class EngineService {
             log.notice("\(tool, privacy: .public) \(args.joined(separator: " "), privacy: .public) exited \(p.terminationStatus)")
         }
         return p.terminationStatus
-    }
-
-    struct Failure: LocalizedError {
-        var message: String
-        init(_ message: String) { self.message = message }
-        var errorDescription: String? { message }
     }
 }

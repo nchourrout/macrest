@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import MacRestCore
 
 /// The few places MacRest reaches into macOS directly, each in one place.
@@ -169,5 +170,15 @@ final class SpaceKeyMonitor {
     func stop() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+    }
+}
+
+/// Disks plugged in or out, for a list of them to follow.
+enum Volumes {
+    static var changes: AnyPublisher<Notification, Never> {
+        let center = NSWorkspace.shared.notificationCenter
+        return center.publisher(for: NSWorkspace.didMountNotification)
+            .merge(with: center.publisher(for: NSWorkspace.didUnmountNotification))
+            .eraseToAnyPublisher()
     }
 }

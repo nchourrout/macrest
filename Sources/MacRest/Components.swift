@@ -2,18 +2,24 @@ import AppKit
 import MacRestCore
 import SwiftUI
 
+/// A line across the top of the window: what happened or what is wrong,
+/// with an action, a dismiss button, or neither.
 struct Banner: View {
     let text: String
     let severity: Severity
+    var symbol: String?
+    var action: (title: String, run: () -> Void)?
     let dismiss: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: severity == .error ? "xmark.octagon.fill" : severity == .ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+            Image(systemName: symbol ?? (severity == .error ? "xmark.octagon.fill" : severity == .ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"))
                 .foregroundStyle(severity == .ok ? Color.accentColor : Theme.color(severity))
             Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            if let action { Button(action.title, action: action.run) }
             if let dismiss {
                 Button(action: dismiss) { Image(systemName: "xmark") }.buttonStyle(.borderless)
+                    .help("Dismiss").accessibilityLabel("Dismiss")
             }
         }
         .font(.callout)
@@ -172,6 +178,17 @@ extension Date {
         let sameYear = cal.component(.year, from: self) == cal.component(.year, from: Date())
         return Format.date(self, sameYear ? "EEE d MMM HH:mm" : "d MMM yyyy HH:mm")
     }
+
+    /// The same moment inside a sentence: "today at 08:36", "on Mon 2 Nov at 08:36".
+    var inlineLabel: String {
+        let cal = Calendar.current
+        let time = " at " + Format.date(self, "HH:mm")
+        if cal.isDateInToday(self) { return "today" + time }
+        if cal.isDateInYesterday(self) { return "yesterday" + time }
+        if cal.isDateInTomorrow(self) { return "tomorrow" + time }
+        let sameYear = cal.component(.year, from: self) == cal.component(.year, from: Date())
+        return "on " + Format.date(self, sameYear ? "EEE d MMM" : "d MMM yyyy") + time
+    }
 }
 
 struct Chevron: View {
@@ -209,6 +226,8 @@ struct DaysChart: View {
                 }
             }
             .frame(height: height)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Last \(Overview.windowDays) days: \(overview.summary)")
             Group {
                 if let day = overview.days.first(where: { $0.start == hovered }) {
                     Text(Format.date(day.start, "EEE d MMM") + ": " + day.summary)
@@ -290,19 +309,61 @@ struct FullDiskAccessRow: View {
 
 /// A warning that asks for one thing: what is wrong, and the button to fix it.
 struct NoticeRow: View {
-    let symbol: String
+    var symbol: String?
+    var tint = Theme.warning
     let text: String
     let button: String
+    var disabled = false
     let action: () -> Void
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Image(systemName: symbol).foregroundStyle(Theme.warning)
+            if let symbol { Image(systemName: symbol).foregroundStyle(tint) }
             Text(text)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button(button, action: action)
+            Button(button, action: action).disabled(disabled)
         }
+    }
+}
+
+/// The eye that shows or hides a password.
+struct RevealButton: View {
+    @Binding var revealed: Bool
+
+    var body: some View {
+        Button { revealed.toggle() } label: { Image(systemName: revealed ? "eye.slash" : "eye") }
+            .buttonStyle(.borderless)
+            .help(revealed ? "Hide Password" : "Show Password")
+            .accessibilityLabel(revealed ? "Hide Password" : "Show Password")
+    }
+}
+
+/// A copy button that says it copied: the clipboard shows nothing, so the
+/// button turns into "Copied" with a check for a moment. Its width holds
+/// whichever label is longer, so the row does not shift.
+struct CopyButton: View {
+    var title = "Copy"
+    var secret = false
+    let text: () -> String
+    @ViewState private var copiedAt: Date?
+
+    var body: some View {
+        Button {
+            Pasteboard.copy(text(), secret: secret)
+            let now = Date()
+            copiedAt = now
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.5))
+                if copiedAt == now { copiedAt = nil }
+            }
+        } label: {
+            ZStack {
+                Text(title).opacity(copiedAt == nil ? 1 : 0)
+                Label("Copied", systemImage: "checkmark").opacity(copiedAt == nil ? 0 : 1)
+            }
+        }
+        .accessibilityLabel(copiedAt == nil ? title : "Copied")
     }
 }
 

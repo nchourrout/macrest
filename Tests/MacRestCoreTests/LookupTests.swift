@@ -154,5 +154,10 @@ let times: [String: Date] = ["aa": Date(timeIntervalSince1970: 100), "bb": Date(
         """), now: now).flows
         #expect(SentRequests().isBusy(.check, flows: flows, now: now))
         #expect(!SentRequests().isBusy(.prune, flows: flows, now: now))
+        let queued = Activity.flows(try ops("""
+        {"id":"1","flowId":"1","status":"STATUS_PENDING","unixTimeStartMs":"1","operationPrune":{}}
+        """), now: now)
+        // Queued behind another task, started in the past: busy too.
+        #expect(SentRequests().isBusy(.prune, flows: queued.flows, now: now))
     }
 }

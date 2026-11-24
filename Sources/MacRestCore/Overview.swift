@@ -67,7 +67,7 @@ public struct Overview: Sendable, Equatable {
     public static func make(flows: [ActivityFlow], scheduled: [BackrestOperation], now: Date,
                             unlockedAt: Date? = nil, calendar: Calendar = .current) -> Overview {
         let backups = flows.map(\.primary).filter { $0.kind == .backup }.sorted { $0.id > $1.id }
-        let finished = backups.filter { $0.outcome != .running && $0.outcome != .pending }
+        let finished = backups.filter { !$0.outcome.isUnderway }
         let reached = finished.filter { !$0.storageUnreachable }
         let running = backups.contains { $0.outcome == .running }
 
@@ -97,7 +97,7 @@ public struct Overview: Sendable, Equatable {
                 .map { $0.value > 1 ? "\($0.value)× \($0.key)" : $0.key }
         }
 
-        let next = scheduled.first { $0.kind == .backup }?.start
+        let next = Activity.next(.backup, in: scheduled)
         let nextText = next.map { n in
             " · next " + Format.date(n, calendar.isDate(n, inSameDayAs: now) ? "HH:mm" : "EEE HH:mm", timeZone: calendar.timeZone)
         } ?? ""
@@ -105,7 +105,7 @@ public struct Overview: Sendable, Equatable {
         let maintenance: [BackrestOperation.Kind] = [.forget, .prune, .check]
         let failing = maintenance.compactMap { kind -> String? in
             guard let last = Activity.lastFinished(kind, in: flows), last.outcome.severity == .error else { return nil }
-            if let unlockedAt, (last.end ?? last.start) < unlockedAt { return nil }
+            if last.predates(unlock: unlockedAt) { return nil }
             return kind.title
         }
 
@@ -125,16 +125,16 @@ public struct Overview: Sendable, Equatable {
                 o.severity = .unknown
                 o.title = "No backups yet"
             }
-            o.subtitle = (finished.first.map { "last try " + Format.ago(Int(now.timeIntervalSince($0.end ?? $0.start))) }
-                          ?? "never run") + nextText
+            o.subtitle = (finished.first.map { "Last try " + Format.ago(Int(now.timeIntervalSince($0.finishedAt))) }
+                          ?? "Never run") + nextText
             return o
         }
         o.privateFoldersSkipped = last.backup?.permissionDenied ?? 0
-        let age = now.timeIntervalSince(last.end ?? last.start)
+        let age = now.timeIntervalSince(last.finishedAt)
         // The newest attempt missed the storage: say so, the verdict still
         // stands on the last run that reached it.
         let missedSince = finished.first?.storageUnreachable == true ? " · storage unreachable" : ""
-        o.subtitle = "last backup " + Format.ago(Int(age)) + missedSince + nextText
+        o.subtitle = "Last backup " + Format.ago(Int(age)) + missedSince + nextText
 
         if age > staleHours * 3600 {
             o.severity = .error
@@ -152,7 +152,7 @@ public struct Overview: Sendable, Equatable {
             let sinceClean = reached.prefix { $0.outcome != .success }
             let failures = sinceClean.filter { $0.outcome.severity == .error }.count
             o.severity = failures * 100 >= errorPct * sinceClean.count ? .error : .warning
-            o.title = "Last backup warned"
+            o.title = "Last backup had warnings"
         default:
             o.title = running ? "Backing up" : "Backups healthy"
         }

@@ -122,7 +122,18 @@ final class AppModel {
             } else if stats == nil {
                 stats = rememberedStats()
             }
-            if let since = measuringSince, let at = stats?.1, at >= since { measuringSince = nil }
+            // A size check that failed (storage offline) ends the wait too,
+            // and says why rather than fall back to an old figure in silence.
+            if let since = measuringSince, let run = Activity.sizeCheck(after: since, in: ops) {
+                measuringSince = nil
+                measureError = run.outcome.severity == .error ? (run.reason ?? "see Activity") : nil
+                measureFailedAt = measureError == nil ? nil : run.finishedAt
+            }
+            // A later size check that worked makes the failure history.
+            if let failedAt = measureFailedAt, let at = stats?.1, at > failedAt {
+                measureError = nil
+                measureFailedAt = nil
+            }
             overview = Overview.make(flows: flows, scheduled: scheduled, now: now, unlockedAt: unlockedAt)
             sent.settle(ops, now: now)
             if loadError != nil, config != nil { loadError = nil }
@@ -170,7 +181,7 @@ final class AppModel {
             // Most likely a modno mismatch: the config changed since it was
             // read. Reload the baseline but keep the edits, so saving again
             // applies them on top of the new version.
-            actionError = "Not saved: \(error.localizedDescription)"
+            actionError = "Not saved: \(error.localizedDescription). Your changes are kept: click Save to try again."
             if let fresh = try? await BackrestClient.getConfig() { adopt(fresh, keepingEdits: true) }
         }
     }
@@ -188,9 +199,6 @@ final class AppModel {
         var autoUnlock: Bool
     }
 
-    /// Creates or connects the repository, adds the plan, and starts the
-    /// first backup. Each step re-reads the config, since Backrest bumps its
-    /// modno on every write.
     /// Backrest refuses to touch a repository, even to probe one, until it
     /// has an instance name, so the setup names the Mac before testing.
     @discardableResult
@@ -204,6 +212,9 @@ final class AppModel {
         return config
     }
 
+    /// Creates or connects the repository, adds the plan, and starts the
+    /// first backup. Each step re-reads the config, since Backrest bumps its
+    /// modno on every write.
     func setUp(_ r: SetupRequest) async throws {
         var config = try await ensureInstance(r.instance)
         let repoID = "main", planID = "home"
@@ -256,8 +267,13 @@ final class AppModel {
     private var measuringSince: Date?
     var measuring: Bool { measuringSince.map { Date().timeIntervalSince($0) < 180 } ?? false }
 
+    /// Why the last Measure failed, until a size check works.
+    private(set) var measureError: String?
+    private var measureFailedAt: Date?
+
     func measure() async {
         measuringSince = Date()
+        measureError = nil
         await repoTask(.stats)
         if actionError != nil { measuringSince = nil }
     }
@@ -295,14 +311,21 @@ final class AppModel {
     func unlock() async {
         unlocking = true
         defer { unlocking = false }
+        let blocked = Activity.blockedByLock(flows, unlockedAt: unlockedAt)
         await repoTask(.unlock)
         guard actionError == nil else { return }
+        // Nothing was failing on a lock: keep the earlier failures as they
+        // are rather than grey them as "before unlock".
+        guard blocked else {
+            notice = "Unlocked. No leftover lock was blocking maintenance, so nothing else changes."
+            return
+        }
         unlockedAt = Date()
         UserDefaults.standard.set(unlockedAt, forKey: "unlockedAt")
         await refreshActivity()
-        let next = scheduled.first { $0.kind == .backup }?.start
+        let next = Activity.next(.backup, in: scheduled)
         notice = "Unlocked. Cleanup, space recovery and verification can run again; cleanup next runs after the backup"
-            + (next.map { " at \($0.activityLabel)" } ?? "") + "."
+            + (next.map { " \($0.inlineLabel)" } ?? "") + "."
     }
 
     /// Retention, prune and check all need an exclusive lock, so a lock left
@@ -314,18 +337,23 @@ final class AppModel {
     /// first that can say whether it worked.
     var staleLock: StaleLock? { Activity.staleLock(in: flows, unlockedAt: unlockedAt) }
 
-    /// Sends a request; `kind` is the operation it starts in the oplog, if any.
-    private func perform(_ kind: BackrestOperation.Kind?, _ work: () async throws -> Void) async {
+    /// Sends a request; `kind` is the operation it starts in the oplog, if
+    /// any. Returns whether it was sent.
+    @discardableResult
+    private func perform(_ kind: BackrestOperation.Kind?, _ work: () async throws -> Void) async -> Bool {
         if let kind { sent.send(kind, at: Date()) }
+        var sentOK = true
         do {
             try await work()
             actionError = nil
         } catch {
             actionError = error.localizedDescription
             if let kind { sent.drop(kind) }
+            sentOK = false
         }
         await refreshActivity()
         wake()
+        return sentOK
     }
 
     // MARK: Recovery kit
@@ -444,12 +472,12 @@ final class AppModel {
             do {
                 let id = try await BackrestClient.runCommand(repo: repo, command: FileSearch.command(query: query, snapshots: scope.map(\.id)))
                 guard let op = try await BackrestClient.operation(id: id), let ref = op.outputLogref else {
-                    throw BackrestClient.Failure(message: "The search finished but left no output.")
+                    throw Failure("The search finished but left no output.")
                 }
                 // A failed find (storage unreachable, a pattern restic
                 // rejects) leaves no matches: say why, not "nothing found".
                 guard op.outcome == .success || op.outcome == .warning else {
-                    throw BackrestClient.Failure(message: op.reason ?? "The search could not read the backups.")
+                    throw Failure(op.reason ?? "The search could not read the backups.")
                 }
                 let log = try await BackrestClient.log(ref: ref)
                 let times = Dictionary(scope.map { ($0.id, $0.time) }, uniquingKeysWith: { a, _ in a })
@@ -476,7 +504,7 @@ final class AppModel {
     private func stopSearchRuns(before: Date) {
         Task {
             let runs = try? await BackrestClient.operations(lastN: 40).filter {
-                $0.kind == .command && ($0.outcome == .running || $0.outcome == .pending) && $0.start < before
+                $0.kind == .command && $0.outcome.isUnderway && $0.start < before
                     && $0.command?.hasPrefix(FileSearch.commandPrefix) == true
             }
             for op in runs ?? [] { try? await BackrestClient.cancel(operation: op.id) }
@@ -526,7 +554,7 @@ final class AppModel {
             do {
                 guard let id = try await BackrestClient.restore(repo: plan.repo, plan: plan.id, snapshot: snapshot.id,
                                                                 path: entry.path, target: target)
-                else { throw BackrestClient.Failure(message: "The backup engine did not start the preview.") }
+                else { throw Failure("The backup engine did not start the preview.") }
                 // Backrest queues the restore. Behind a running backup it
                 // waits for that to end, so the wait slows down until it runs,
                 // and gives up after a minute of waiting: a backup can take hours.
@@ -538,7 +566,7 @@ final class AppModel {
                     wait = op?.outcome == .running ? 0.5 : min(wait * 2, 4)
                     if op?.outcome != .running, op?.outcome != .success, Date().timeIntervalSince(queuedSince) > 60 {
                         try? await BackrestClient.cancel(operation: id)
-                        throw BackrestClient.Failure(message: "The backup engine is busy with another task, so \u{201C}\(entry.name)\u{201D} cannot be previewed yet. Try again when it finishes.")
+                        throw Failure("The backup engine is busy with another task, so \u{201C}\(entry.name)\u{201D} cannot be previewed yet. Try again when it finishes.")
                     }
                     switch op?.outcome {
                     case .success?:
@@ -547,7 +575,7 @@ final class AppModel {
                         previewURL = url
                         return
                     case .failed?, .cancelled?, .warning?:
-                        throw BackrestClient.Failure(message: "Could not preview \u{201C}\(entry.name)\u{201D}: \(op?.reason ?? "the restore failed").")
+                        throw Failure("Could not preview \u{201C}\(entry.name)\u{201D}: \(op?.reason ?? "the restore failed").")
                     default:
                         continue
                     }
@@ -604,9 +632,11 @@ final class AppModel {
 
     /// Restores `entry` from the selected snapshot into a new folder at
     /// `target`. Backrest runs it as an operation, so it shows in Activity.
-    func restore(_ entry: SnapshotEntry, to target: String) async {
-        guard let snapshot = selectedSnapshot, let plan = savedPlan else { return }
-        await perform(.restore) {
+    /// Returns whether Backrest took it: a refused restore never reaches the
+    /// oplog, so there is nothing to follow.
+    func restore(_ entry: SnapshotEntry, to target: String) async -> Bool {
+        guard let snapshot = selectedSnapshot, let plan = savedPlan else { return false }
+        return await perform(.restore) {
             try await BackrestClient.restore(repo: plan.repo, plan: plan.id, snapshot: snapshot.id, path: entry.path, target: target)
         }
     }

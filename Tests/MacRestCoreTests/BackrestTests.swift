@@ -2,27 +2,6 @@ import Foundation
 import Testing
 @testable import MacRestCore
 
-/// The shape GetConfig returns here, password and all, with fields the app
-/// does not model (hooks, sync, auth, guid) that a save must keep.
-let configJSON = """
-{"modno":4,"version":6,"instance":"macbook","auth":{"disabled":true},
- "repos":[{"id":"nas","uri":"sftp:nas:/backups/mac","guid":"0cea","password":"hunter2",
-   "prunePolicy":{"schedule":{"maxFrequencyDays":7,"clock":"CLOCK_LAST_RUN_TIME"},"maxUnusedPercent":10},
-   "checkPolicy":{"schedule":{"maxFrequencyDays":30,"clock":"CLOCK_LAST_RUN_TIME"},"structureOnly":true}}],
- "plans":[{"id":"home","repo":"nas","paths":["/Users/alex"],"excludes":["/Users/alex/.Trash","**/node_modules"],
-   "schedule":{"maxFrequencyHours":4,"clock":"CLOCK_LAST_RUN_TIME"},
-   "retention":{"policyTimeBucketed":{"daily":7,"weekly":4,"monthly":3}},
-   "hooks":[{"conditions":["CONDITION_FORGET_ERROR"],"actionCommand":{"command":"osascript"}}],
-   "backup_flags":["--exclude-caches"]}],
- "sync":{"identity":{"keyId":"ed25519.T7D"}}}
-"""
-
-func config() throws -> JSONValue { try JSONDecoder().decode(JSONValue.self, from: Data(configJSON.utf8)) }
-
-func roundTrip(_ v: JSONValue) throws -> JSONValue {
-    try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(v))
-}
-
 @Suite struct BackrestConfigTests {
     @Test func jsonRoundTripKeepsEverything() throws {
         let c = try config()
@@ -56,6 +35,11 @@ func roundTrip(_ v: JSONValue) throws -> JSONValue {
         let c = try config()
         let (plan, repo) = try #require(BackrestConfig.read(c))
         #expect(try roundTrip(BackrestConfig.applied(plan, repo, to: c)) == c)
+        // A config Backrest wrote with its defaults left out: no policy,
+        // schedule or retention. Saving it unedited must add none of them.
+        let minimal = try JSONDecoder().decode(JSONValue.self, from: Data(#"{"modno":1,"instance":"mac","repos":[{"id":"r","uri":"/Volumes/X/b","password":"pw"}],"plans":[{"id":"home","repo":"r","paths":["/Users/alex"]}]}"#.utf8))
+        let (p, r) = try #require(BackrestConfig.read(minimal))
+        #expect(try roundTrip(BackrestConfig.applied(p, r, to: minimal)) == minimal)
     }
 
     @Test func editsKeepUnmodelledFields() throws {
@@ -98,7 +82,38 @@ func roundTrip(_ v: JSONValue) throws -> JSONValue {
     @Test func retentionSummary() {
         #expect(RetentionSetting.buckets(TimeBuckets(daily: 7, weekly: 4, monthly: 3)).summary == "Keeps about 3 months of history")
         #expect(RetentionSetting.buckets(TimeBuckets(hourly: 24, monthly: 24)).summary == "Keeps about 2 years of history")
+        #expect(RetentionSetting.buckets(TimeBuckets(daily: 7)).summary == "Keeps about 7 days of history")
+        #expect(RetentionSetting.buckets(TimeBuckets(keepLastN: 5)).summary == "Keeps the last 5 backups")
         #expect(RetentionSetting.lastN(1).summary == "Keeps the last 1 backup")
+        #expect(RetentionSetting.keepAll.summary == "Keeps every backup")
+    }
+
+    /// Rotating or clearing a key in the Storage pane writes exactly that,
+    /// and never touches the repository password.
+    @Test func credentialEdits() throws {
+        let c = try config()
+        var (plan, repo) = try #require(BackrestConfig.read(c))
+        #expect(repo.env.isEmpty)
+        repo.env = ["B2_ACCOUNT_ID=new", "B2_ACCOUNT_KEY=k=v"]
+        let rotated = try roundTrip(BackrestConfig.applied(plan, repo, to: c))
+        let r = try #require(rotated["repos"]?.array?.first)
+        #expect(r["env"]?.strings == ["B2_ACCOUNT_ID=new", "B2_ACCOUNT_KEY=k=v"])
+        #expect(r["password"]?.string == "hunter2")
+        // Cleared: an empty list, not the old secret left in place.
+        var (_, again) = try #require(BackrestConfig.read(rotated))
+        #expect(again.env == ["B2_ACCOUNT_ID=new", "B2_ACCOUNT_KEY=k=v"])
+        again.env = []
+        let cleared = try roundTrip(BackrestConfig.applied(plan, again, to: rotated))
+        #expect(cleared["repos"]?.array?.first?["env"] == .array([]))
+        // Switching verification back to structure only drops the sample.
+        repo.checkMode = .readData(percent: 10)
+        let sampled = BackrestConfig.applied(plan, repo, to: c)
+        repo.checkMode = .structureOnly
+        let back = BackrestConfig.applied(plan, repo, to: sampled)["repos"]?.array?.first?["checkPolicy"]
+        #expect(back?["readDataSubsetPercent"] == nil)
+        #expect(back?["structureOnly"]?.bool == true)
+        plan.skipIfUnchanged = true
+        #expect(BackrestConfig.applied(plan, repo, to: c)["plans"]?.array?.first?["skipIfUnchanged"]?.bool == true)
     }
 }
 
@@ -154,6 +169,17 @@ let operationsJSON = """
         #expect(flows[0].primary.kind == .unknown)
     }
 
+    @Test func unlockedIsNotALock() throws {
+        let flows = Activity.flows(try decodeOps([
+            op(1, "operationForget", "STATUS_ERROR", hoursAgo: 1, message: "Fatal: repository was unlocked while forgetting"),
+        ]), now: now).flows
+        #expect(Activity.staleLock(in: flows, unlockedAt: nil) == nil)
+        let locked = Activity.flows(try decodeOps([
+            op(1, "operationForget", "STATUS_ERROR", hoursAgo: 1, message: "Fatal: unable to create lock in backend: repository is already locked by PID 12"),
+        ]), now: now).flows
+        #expect(Activity.staleLock(in: locked, unlockedAt: nil) != nil)
+    }
+
     @Test func staleLock() throws {
         let flows = Activity.flows(try Activity.decode(Data(operationsJSON.utf8)), now: now).flows
         let lock = try #require(Activity.staleLock(in: flows, unlockedAt: nil))
@@ -194,7 +220,7 @@ let operationsJSON = """
         var failed = ConnectStream.envelope(Data(#"{"error":{"code":"not_found","message":"no such log"}}"#.utf8))
         failed[0] = 0x02
         #expect(ConnectStream.decode(failed).error == "no such log")
-        #expect(ConnectStream.decode(Data([0, 0, 0, 0, 9, 1])).error != nil)
+        #expect(ConnectStream.decode(Data([0, 0, 0, 0, 9, 1])).error == "the log stream was cut short")
     }
 }
 
@@ -217,6 +243,10 @@ let operationsJSON = """
         #expect(days == days.sorted { $0.day > $1.day })
         #expect(Activity.lastFinished(.forget, in: flows)?.id == 8359)
         #expect(Activity.lastFinished(.check, in: flows) == nil)
-        #expect(days.first?.title(now: days.first!.day) == "Today")
+        let day = { (s: String) in ActivityDay(day: ISO8601DateFormatter().date(from: s)!, flows: []) }
+        #expect(day("2026-11-03T00:00:00Z").title(now: now, calendar: utc) == "Today")
+        #expect(day("2026-11-02T00:00:00Z").title(now: now, calendar: utc) == "Yesterday")
+        #expect(day("2026-10-26T00:00:00Z").title(now: now, calendar: utc) == "Monday 26 October")
+        #expect(day("2025-10-26T00:00:00Z").title(now: now, calendar: utc) == "26 October 2025")
     }
 }
