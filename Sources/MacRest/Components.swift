@@ -281,13 +281,27 @@ struct FullDiskAccessRow: View {
     let skipped: Int
 
     var body: some View {
+        NoticeRow(symbol: "lock.shield",
+                  text: "\(Format.plural(skipped, "private folder")) skipped. Allow the backup engine Full Disk Access, then back up again.",
+                  button: "Allow…", action: { FullDiskAccess.open() })
+            .help("Open Full Disk Access in System Settings and show the backup engine in Finder, to drag it into the list")
+    }
+}
+
+/// A warning that asks for one thing: what is wrong, and the button to fix it.
+struct NoticeRow: View {
+    let symbol: String
+    let text: String
+    let button: String
+    let action: () -> Void
+
+    var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Image(systemName: "lock.shield").foregroundStyle(Theme.warning)
-            Text("\(Format.plural(skipped, "private folder")) skipped. Allow the backup engine Full Disk Access, then back up again.")
+            Image(systemName: symbol).foregroundStyle(Theme.warning)
+            Text(text)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Allow…") { FullDiskAccess.open() }
-                .help("Open Full Disk Access in System Settings and show the backup engine in Finder, to drag it into the list")
+            Button(button, action: action)
         }
     }
 }

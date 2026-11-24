@@ -92,7 +92,7 @@ struct MainWindow: View {
                     Label("Back Up Now", systemImage: "arrow.clockwise.icloud")
                         .labelStyle(.titleAndIcon)
                 }
-                .disabled(model.savedPlan == nil || model.starting)
+                .disabled(model.savedPlan == nil || model.isBusy(.backup))
                 .help("Start a backup now")
             }
         }

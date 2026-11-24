@@ -7,6 +7,7 @@ struct ActivityView: View {
     @ViewState private var filter: Filter = .all
     @ViewState private var expanded: Set<Int64> = []
     @ViewState private var logFor: BackrestOperation?
+    @ViewState private var showsKit = false
 
     enum Filter: String, CaseIterable, Identifiable {
         case all = "All", backups = "Backups", problems = "Problems"
@@ -36,6 +37,9 @@ struct ActivityView: View {
             if let skipped = model.overview?.privateFoldersSkipped, skipped > 0 {
                 SwiftUI.Section { FullDiskAccessRow(skipped: skipped) }
             }
+            if model.recoveryKit != nil, model.kitSavedAt == nil {
+                SwiftUI.Section { RecoveryKitRow { showsKit = true } }
+            }
             if let run = model.runningBackup {
                 SwiftUI.Section("Now") { RunningBackupRow(op: run.primary) }
             }
@@ -60,6 +64,7 @@ struct ActivityView: View {
             }
         }
         .sheet(item: $logFor) { op in LogSheet(op: op, model: model) }
+        .sheet(isPresented: $showsKit) { RecoveryKitSheet(model: model) }
     }
 
     private func toggle(_ id: Int64) {

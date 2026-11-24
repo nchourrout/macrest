@@ -91,6 +91,9 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
     public var stats: Stats?
     public var hookCondition: String?
     public var restoreTarget: String?
+    /// A `RunCommand`'s restic arguments, and the log holding its output.
+    public var command: String?
+    public var outputLogref: String?
     /// A failure to reach the storage at all (offline, server asleep, disk
     /// unplugged): nothing was backed up, but nothing is broken either, so
     /// the verdict counts it as a missed run rather than a failure. Classified
@@ -201,6 +204,10 @@ public struct BackrestOperation: Decodable, Sendable, Identifiable, Equatable {
         case .restore:
             let r = try? c.decode(JSONValue.self, forKey: .operationRestore)
             restoreTarget = r?["target"]?.string
+        case .command:
+            let r = try? c.decode(JSONValue.self, forKey: .operationRunCommand)
+            command = r?["command"]?.string
+            outputLogref = r?["outputLogref"]?.string
         default:
             break
         }
@@ -311,6 +318,12 @@ public enum Activity {
         return try JSONDecoder().decode(List.self, from: data).operations?.compactMap(\.op) ?? []
     }
 
+    /// The newest restore into `target`: the one a Restore or a Quick Look
+    /// started, followed by where it goes.
+    public static func restore(into target: String, in operations: [BackrestOperation]) -> BackrestOperation? {
+        operations.filter { $0.kind == .restore && $0.restoreTarget == target }.max { $0.id < $1.id }
+    }
+
     /// The newest finished stats run: the repository's size and snapshot count.
     public static func latestStats(_ operations: [BackrestOperation]) -> (BackrestOperation.Stats, Date)? {
         operations.filter { $0.kind == .stats && $0.outcome == .success && $0.stats?.totalSize != nil }
@@ -408,5 +421,43 @@ extension Activity {
         if let unlockedAt, (last.end ?? last.start) < unlockedAt { return nil }
         let streak = forgets.prefix(while: lockFailure).count
         return StaleLock(failedRuns: streak, coversWholeLog: streak == forgets.count, reason: reason)
+    }
+}
+
+/// What MacRest just asked the engine to run, by kind, until the oplog shows
+/// it. Each button waits on its own kind only: one flag shared by every
+/// request greyed out every button at each click, for the moment between
+/// the click and the next poll.
+public struct SentRequests: Sendable, Equatable {
+    /// How long a request counts as on its way when the oplog never shows it.
+    public static let grace: TimeInterval = 20
+    private var sent: [BackrestOperation.Kind: Date] = [:]
+
+    public init() {}
+
+    public mutating func send(_ kind: BackrestOperation.Kind, at now: Date) { sent[kind] = now }
+    public mutating func drop(_ kind: BackrestOperation.Kind) { sent[kind] = nil }
+
+    /// Forgets the requests the oplog now holds (running, queued or already
+    /// finished, which a fast run can be by the next poll) and those that
+    /// waited past the grace period.
+    public mutating func settle(_ operations: [BackrestOperation], now: Date) {
+        sent = sent.filter { kind, at in
+            now.timeIntervalSince(at) < Self.grace
+                // A couple of seconds of slack: the engine stamps the start.
+                && !operations.contains { $0.kind == kind && $0.start >= at.addingTimeInterval(-2) }
+        }
+    }
+
+    public func isSending(_ kind: BackrestOperation.Kind, now: Date) -> Bool {
+        sent[kind].map { now.timeIntervalSince($0) < Self.grace } ?? false
+    }
+
+    public func any(now: Date) -> Bool { sent.values.contains { now.timeIntervalSince($0) < Self.grace } }
+
+    /// A run of this kind was just asked for, is queued, or is running.
+    public func isBusy(_ kind: BackrestOperation.Kind, flows: [ActivityFlow], now: Date) -> Bool {
+        isSending(kind, now: now)
+            || flows.contains { $0.steps.contains { $0.kind == kind && ($0.outcome == .running || $0.outcome == .pending) } }
     }
 }

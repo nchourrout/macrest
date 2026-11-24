@@ -64,10 +64,36 @@ enum BackrestClient {
     enum RepoTask: String, CaseIterable {
         case check = "TASK_CHECK", prune = "TASK_PRUNE", stats = "TASK_STATS", unlock = "TASK_UNLOCK"
         case indexSnapshots = "TASK_INDEX_SNAPSHOTS"
+
+        /// The operation it shows as in the oplog; unlock leaves none.
+        var kind: BackrestOperation.Kind? {
+            switch self {
+            case .check: .check
+            case .prune: .prune
+            case .stats: .stats
+            case .indexSnapshots: .indexSnapshot
+            case .unlock: nil
+            }
+        }
     }
 
     static func repoTask(_ task: RepoTask, repo: String) async throws {
         _ = try await call("DoRepoTask", JSONValue.object(["repoId": .string(repo), "task": .string(task.rawValue)]))
+    }
+
+    static func operation(id: Int64) async throws -> BackrestOperation? {
+        let body = JSONValue.object(["selector": .object(["ids": .array([.string(String(id))])])])
+        return try Activity.decode(try await call("GetOperations", body)).first
+    }
+
+    /// Runs `restic <command>` against the repository and returns once it
+    /// finished: Backrest answers only then. The output goes to the
+    /// operation's `outputLogref`, at most 2 MB of it.
+    static func runCommand(repo: String, command: String) async throws -> Int64 {
+        let body = JSONValue.object(["repoId": .string(repo), "command": .string(command)])
+        let v = try JSONDecoder().decode(JSONValue.self, from: try await call("RunCommand", body, timeout: 600))
+        guard let id = v["operationId"]?.int64 else { throw Failure(message: "The backup engine did not say which run it started.") }
+        return id
     }
 
     static func log(ref: String) async throws -> String {
@@ -94,11 +120,14 @@ extension BackrestClient {
     }
 
     /// Backrest restores `path` from the snapshot into `target`, which must
-    /// not exist yet: restic creates it and puts the item inside.
-    static func restore(repo: String, plan: String, snapshot: String, path: String, target: String) async throws {
+    /// not exist yet: restic creates it and puts the item inside. Returns the
+    /// queued operation's id, nil when Backrest created none.
+    @discardableResult
+    static func restore(repo: String, plan: String, snapshot: String, path: String, target: String) async throws -> Int64? {
         let body = JSONValue.object(["repoId": .string(repo), "planId": .string(plan), "snapshotId": .string(snapshot),
                                      "path": .string(path), "target": .string(target)])
-        _ = try await call("Restore", body)
+        let v = try JSONDecoder().decode(JSONValue.self, from: try await call("Restore", body))
+        return v["operationId"]?.int64.flatMap { $0 == 0 ? nil : $0 }
     }
 }
 

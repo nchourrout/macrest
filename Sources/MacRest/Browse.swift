@@ -1,5 +1,6 @@
 import AppKit
 import MacRestCore
+import QuickLook
 import SwiftUI
 
 /// Browse a snapshot and restore from it. The folder stays put when the
@@ -13,10 +14,21 @@ struct BrowseView: View {
     /// Dot-files hidden by default, as in Finder; the home folder starts with
     /// forty of them.
     @AppStorage("showsHiddenFiles") private var showsHidden = false
+    /// Typing filters the folder shown; Return searches the backups.
+    @ViewState private var query = ""
+    @ViewState private var spaceKey = SpaceKeyMonitor()
+    @FocusState private var listFocused: Bool
+
+    private var trimmedQuery: String { query.trimmingCharacters(in: .whitespaces) }
 
     private var shown: [SnapshotEntry] {
-        showsHidden ? model.entries : model.entries.filter { !$0.name.hasPrefix(".") }
+        let visible = showsHidden ? model.entries : model.entries.filter { !$0.name.hasPrefix(".") }
+        let q = trimmedQuery
+        return q.isEmpty ? visible : visible.filter { $0.name.localizedCaseInsensitiveContains(q) }
     }
+
+    /// The search results are on screen rather than the folder.
+    private var showsResults: Bool { !trimmedQuery.isEmpty && model.hasSearch }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -34,6 +46,26 @@ struct BrowseView: View {
             timeline.frame(width: 250)
         }
         .task(id: model.savedPlan?.id) { await model.loadSnapshots() }
+        .searchable(text: $query, placement: .toolbar, prompt: "Filter or search backups")
+        .onSubmit(of: .search) { model.search(query) }
+        .onChange(of: query) {
+            // A changed query is a new one: the old results no longer match it.
+            if model.hasSearch { model.clearSearch() }
+        }
+        .onChange(of: model.entries) { applyHighlight() }
+        .onChange(of: model.highlight) { applyHighlight() }
+        .quickLookPreview($model.previewURL)
+        .onAppear {
+            // Space opens the preview, and closes it again, as in Finder.
+            spaceKey.start {
+                if model.previewURL != nil { model.previewURL = nil; return true }
+                // The file list only: Space in the timeline is not a preview.
+                guard listFocused, !showsResults, let e = entry(selection), !e.isDirectory else { return false }
+                model.preview(e)
+                return true
+            }
+        }
+        .onDisappear { spaceKey.stop() }
         .sheet(item: $restoring) { entry in
             RestoreSheet(entry: entry, snapshot: model.selectedSnapshot) { target in
                 lastTarget = target
@@ -90,7 +122,12 @@ struct BrowseView: View {
     // MARK: Files
 
     @ViewBuilder private var files: some View {
-        if let error = model.browseError {
+        if showsResults {
+            SearchResults(model: model, query: trimmedQuery) { path, snapshot in
+                query = ""
+                model.reveal(path, in: snapshot)
+            }
+        } else if let error = model.browseError {
             ContentUnavailableView {
                 Label(model.selectedSnapshot == nil ? "Could not list the backups" : "Could not read this folder",
                       systemImage: "exclamationmark.triangle")
@@ -132,6 +169,7 @@ struct BrowseView: View {
             .contextMenu(forSelectionType: SnapshotEntry.ID.self) { ids in
                 if let e = entry(ids) {
                     if e.isDirectory { Button("Open") { model.open(e.path) } }
+                    if !e.isDirectory { Button("Quick Look") { model.preview(e) } }
                     Button("Restore…") { restoring = e }
                     Divider()
                     Button("Copy Path") { Pasteboard.copy(e.path) }
@@ -143,7 +181,20 @@ struct BrowseView: View {
                 // double-click on a file should not start one.
                 if e.isDirectory { selection = []; model.open(e.path) }
             }
+            .focused($listFocused)
         }
+    }
+
+    /// Selects a search result once its folder is listed, showing hidden
+    /// files when it is one.
+    private func applyHighlight() {
+        guard let path = model.highlight, model.entries.contains(where: { $0.path == path }) else { return }
+        if (path as NSString).lastPathComponent.hasPrefix(".") { showsHidden = true }
+        selection = [path]
+        // The results list had the focus and is gone: give it to the folder,
+        // so Space previews the item just found.
+        listFocused = true
+        model.highlight = nil
     }
 
     private func entry(_ ids: Set<SnapshotEntry.ID>) -> SnapshotEntry? {
@@ -153,28 +204,53 @@ struct BrowseView: View {
 
     /// The icon Finder would show, from the extension alone: the file is not on
     /// disk to ask.
-    static func icon(for entry: SnapshotEntry) -> NSImage {
-        if entry.isDirectory { return NSWorkspace.shared.icon(for: .folder) }
-        let ext = (entry.name as NSString).pathExtension
+    static func icon(for entry: SnapshotEntry) -> NSImage { icon(name: entry.name, isDirectory: entry.isDirectory) }
+
+    static func icon(name: String, isDirectory: Bool) -> NSImage {
+        if isDirectory { return NSWorkspace.shared.icon(for: .folder) }
+        let ext = (name as NSString).pathExtension
         return NSWorkspace.shared.icon(for: ext.isEmpty ? .data : (.init(filenameExtension: ext) ?? .data))
     }
 
     // MARK: Footer: restore and its outcome
 
     private var footer: some View {
-        HStack(spacing: 10) {
-            if model.entriesLoading && !model.entries.isEmpty {
+        let selected = entry(selection)
+        return HStack(spacing: 10) {
+            if let searching = model.searching {
                 ProgressView().controlSize(.small)
-                Text("Opening…").foregroundStyle(.secondary)
-            } else if let target = lastTarget {
-                RestoreStatus(target: target, flows: model.flows)
+                Text("Searching \(Format.plural(model.searchScope.count, "backup")) for \u{201C}\(searching)\u{201D}…").foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel") { model.clearSearch() }
+            } else if showsResults {
+                Text(model.searchResult?.truncated == true
+                     ? "Too many matches to show them all. Type more of the name."
+                     : "Double-click a result to show it in its backup.")
+                    .foregroundStyle(model.searchResult?.truncated == true ? Theme.warning : .secondary)
+                Spacer()
             } else {
-                Text("Double-click a folder to open it. Select a file or folder, then Restore….").foregroundStyle(.secondary)
+                if let previewing = model.previewing {
+                    ProgressView().controlSize(.small)
+                    Text("Fetching \u{201C}\(previewing.name)\u{201D} to preview…").lineLimit(1).truncationMode(.middle)
+                    Button("Cancel") { model.cancelPreview() }
+                } else if model.entriesLoading && !model.entries.isEmpty {
+                    ProgressView().controlSize(.small)
+                    Text("Opening…").foregroundStyle(.secondary)
+                } else if !trimmedQuery.isEmpty {
+                    Text("Press Return to search \(Format.plural(model.searchScope.count, "backup")) from the last \(FileSearch.days) days.")
+                        .foregroundStyle(.secondary)
+                } else if let target = lastTarget {
+                    RestoreStatus(target: target, flows: model.flows)
+                } else {
+                    Text("Double-click opens a folder. Space previews a file.").foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Quick Look") { selected.map(model.preview) }
+                    .disabled(selected?.isDirectory ?? true || model.previewing != nil)
+                Button("Restore…") { restoring = selected }
+                    .disabled(selected == nil)
+                    .keyboardShortcut(.return, modifiers: .command)
             }
-            Spacer()
-            Button("Restore…") { restoring = entry(selection) }
-                .disabled(entry(selection) == nil)
-                .keyboardShortcut(.return, modifiers: .command)
         }
         .font(.callout)
         .padding(10)
@@ -188,6 +264,89 @@ struct BrowseView: View {
             selection = []
             model.select(s)
         }
+    }
+}
+
+/// Files and folders found by name, newest first. Each opens in the newest
+/// backup holding it; the menu lists every version found.
+struct SearchResults: View {
+    let model: AppModel
+    let query: String
+    let reveal: (String, String) -> Void
+    @ViewState private var selection: Set<FoundItem.ID> = []
+
+    var body: some View {
+        if let error = model.searchError {
+            ContentUnavailableView {
+                Label("The search failed", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("Try Again") { model.search(query) }
+            }
+        } else if let result = model.searchResult {
+            if result.items.isEmpty {
+                ContentUnavailableView("Nothing named \u{201C}\(query)\u{201D}", systemImage: "magnifyingglass",
+                                       description: Text("No file or folder with that in its name in \(Format.plural(result.snapshotCount, "backup")) from the last \(FileSearch.days) days."))
+            } else {
+                table(result.items)
+            }
+        } else {
+            Loading(title: "Searching the backups…",
+                    detail: "Looking for \u{201C}\(query)\u{201D} in every backup from the last \(FileSearch.days) days. Over the network this can take a minute.")
+        }
+    }
+
+    private func table(_ items: [FoundItem]) -> some View {
+        Table(items, selection: $selection) {
+            TableColumn("Name") { item in
+                Label {
+                    Text(item.name)
+                } icon: {
+                    Image(nsImage: BrowseView.icon(name: item.name, isDirectory: item.isDirectory)).resizable().frame(width: 16, height: 16)
+                }
+            }
+            TableColumn("Folder") { item in
+                Text((item.folder as NSString).abbreviatingWithTildeInPath)
+                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+            }
+            TableColumn("Versions") { item in
+                Text(item.isDirectory ? "" : "\(item.versions.count)").foregroundStyle(.secondary).monospacedDigit()
+            }
+            .width(70)
+            TableColumn("Last Backed Up") { item in
+                Text(item.lastSeen.activityLabel).foregroundStyle(.secondary).monospacedDigit()
+            }
+            .width(170)
+        }
+        .contextMenu(forSelectionType: FoundItem.ID.self) { ids in
+            if let item = items.first(where: { ids.count == 1 && $0.id == ids.first }) {
+                Button("Show in Backup") { show(item, item.versions[0]) }
+                if item.versions.count > 1 {
+                    Divider()
+                    ForEach(Array(item.versions.enumerated()), id: \.offset) { _, v in
+                        Button(versionTitle(v)) { show(item, v) }
+                    }
+                }
+                Divider()
+                Button("Copy Path") { Pasteboard.copy(item.path) }
+            }
+        } primaryAction: { ids in
+            guard ids.count == 1, let item = items.first(where: { $0.id == ids.first }) else { return }
+            show(item, item.versions[0])
+        }
+    }
+
+    private func show(_ item: FoundItem, _ version: FoundItem.Version) {
+        guard let snapshot = version.snapshots.first else { return }
+        reveal(item.path, snapshot)
+    }
+
+    private func versionTitle(_ v: FoundItem.Version) -> String {
+        var parts = ["Modified " + (v.modified.map { $0.activityLabel } ?? "at an unknown time")]
+        if let size = v.size { parts.append(Format.size(size)) }
+        parts.append("in \(Format.plural(v.snapshots.count, "backup"))")
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -313,7 +472,7 @@ struct RestoreStatus: View {
     let flows: [ActivityFlow]
 
     private var op: BackrestOperation? {
-        flows.flatMap(\.steps).filter { $0.kind == .restore && $0.restoreTarget == target }.max { $0.id < $1.id }
+        Activity.restore(into: target, in: flows.flatMap(\.steps))
     }
 
     var body: some View {

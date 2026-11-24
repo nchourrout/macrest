@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let i = args.firstIndex(of: "--window"), i + 1 < args.count, let pane = Pane(rawValue: args[i + 1].capitalized) {
             AppModel.shared.pane = pane
         }
+        QuickLookCache.clear()
         Self.updateActivationPolicy()
         Self.registerLoginItemOnce()
         AppModel.shared.start()
@@ -208,7 +209,7 @@ struct MenuPanel: View {
                 Button { Task { await model.backupNow() } } label: {
                     Label("Back Up Now", systemImage: "arrow.clockwise.icloud").frame(maxWidth: .infinity)
                 }
-                .disabled(model.runningBackup != nil || model.starting || model.savedPlan == nil)
+                .disabled(model.runningBackup != nil || model.isBusy(.backup) || model.savedPlan == nil)
                 Button { open(.browse) } label: {
                     Label("Restore…", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90").frame(maxWidth: .infinity)
                 }
