@@ -75,6 +75,8 @@ extension MaintenanceRow where Action == EmptyView {
 struct StorageView: View {
     @Bindable var model: AppModel
     @ViewState private var confirmPrune = false
+    @ViewState private var showsKit = false
+    @ViewState private var revealsPassword = false
 
     var body: some View {
         if let repo = Binding($model.repo) {
@@ -108,39 +110,48 @@ struct StorageView: View {
                             }
                             Button("Measure") { Task { await model.measure() } }
                                 .controlSize(.small)
-                                .disabled(model.starting || model.measuring)
+                                .disabled(model.measuring)
                         }
                     }
                 }
 
+                recoveryKit
+
+                // Each button waits on its own task only: disabling the whole
+                // section while any task started made every button blink.
                 SwiftUI.Section {
                     MaintenanceRow(title: "Cleanup", symbol: "calendar.badge.minus",
                                    last: Activity.lastFinished(.forget, in: model.flows), next: nil,
                                    note: "Removes backups past their keep period, after every backup", unlockedAt: model.unlockedAt)
                     MaintenanceRow(title: "Verification", symbol: "checkmark.shield",
                                    last: Activity.lastFinished(.check, in: model.flows),
-                                   next: model.scheduled.first { $0.kind == .check }?.start, unlockedAt: model.unlockedAt) {
+                                   next: model.scheduled.first { $0.kind == .check }?.start,
+                                   note: "Reads the storage back to catch damage", unlockedAt: model.unlockedAt) {
                         Button("Verify Now") { Task { await model.repoTask(.check) } }
+                            .disabled(model.isBusy(.check))
                     }
                     MaintenanceRow(title: "Space recovery", symbol: "scissors",
                                    last: Activity.lastFinished(.prune, in: model.flows),
-                                   next: model.scheduled.first { $0.kind == .prune }?.start, unlockedAt: model.unlockedAt) {
+                                   next: model.scheduled.first { $0.kind == .prune }?.start,
+                                   note: "Deletes the data only removed backups used, so the storage shrinks", unlockedAt: model.unlockedAt) {
                         Button("Free Up Space…") { confirmPrune = true }
+                            .disabled(model.isBusy(.prune))
+                            .help("Delete stored data that no remaining backup needs")
                     }
-                    MaintenanceRow(title: "Locks", symbol: model.staleLock == nil ? "lock.open" : "lock.trianglebadge.exclamationmark",
+                    MaintenanceRow(title: "Leftover lock", symbol: model.staleLock == nil ? "lock.open" : "lock.trianglebadge.exclamationmark",
                                    last: nil, next: nil,
-                                   note: model.staleLock == nil ? "No leftover lock" : "A leftover lock is blocking cleanup and space recovery",
+                                   note: model.staleLock == nil ? "None: nothing is blocking maintenance" : "A leftover lock is blocking cleanup and space recovery",
                                    noteSeverity: model.staleLock == nil ? .ok : .error) {
                         Button("Unlock") { Task { await model.unlock() } }
+                            .disabled(model.unlocking)
                             .help("Remove locks left behind by a run that crashed or was cut off")
                     }
                     Toggle("Clear leftover locks automatically", isOn: repo.autoUnlock)
                 } header: {
                     Text("Maintenance")
                 } footer: {
-                    Text("A lock left behind by a crashed run blocks cleanup, space recovery and verification until it is removed. Clearing it automatically is safe while this Mac is the only one backing up to this storage.")
+                    Text("While a task changes the storage, it locks it so nothing else changes it at the same time, and unlocks it when done. A run cut off by a crash, sleep or a lost connection leaves its lock behind, and cleanup, space recovery and verification then fail until it is removed. Unlock removes only such leftovers. Clearing them automatically is safe while this Mac is the only one backing up to this storage.")
                 }
-                .disabled(model.starting)
 
                 SwiftUI.Section {
                     ScheduleEditor(title: "Verify", schedule: repo.checkSchedule, allowsHours: false)
@@ -168,14 +179,49 @@ struct StorageView: View {
                 } header: {
                     Text("Space recovery")
                 } footer: {
-                    Text("Cleanup removes old backups from the list, but their data stays until space recovery deletes what no backup uses any more. Allowing some unused space makes it run less often.")
+                    Text("Cleanup removes old backups from the list, but their files stay on the storage, since newer backups share most of them. Space recovery deletes what no remaining backup uses, which is when the storage actually shrinks. Allowing some unused space makes it run less often.")
                 }
             }
             .formStyle(.grouped)
             .confirmationDialog("Free up space now?", isPresented: $confirmPrune) {
                 Button("Free Up Space") { Task { await model.repoTask(.prune) } }
             } message: {
-                Text("This rewrites data on the storage and locks it while it runs: backups wait until it finishes, which can take a while when there is a lot stored.")
+                Text("This deletes stored data that no remaining backup uses. No backup is removed and nothing you can restore changes. It locks the storage while it runs: backups wait until it finishes, which can take a while when there is a lot stored.")
+            }
+            .sheet(isPresented: $showsKit) { RecoveryKitSheet(model: model) }
+        }
+    }
+
+    /// The password and the kit: the one thing that, lost with this Mac,
+    /// makes every backup unreadable.
+    @ViewBuilder private var recoveryKit: some View {
+        if let kit = model.recoveryKit {
+            SwiftUI.Section {
+                LabeledContent("Password") {
+                    HStack(spacing: 8) {
+                        Text(revealsPassword ? kit.password : String(repeating: "•", count: 12))
+                            .font(.body.monospaced())
+                            .textSelection(.enabled)
+                        Button { revealsPassword.toggle() } label: { Image(systemName: revealsPassword ? "eye.slash" : "eye") }
+                            .buttonStyle(.borderless)
+                            .help(revealsPassword ? "Hide" : "Show")
+                        Button("Copy") { Pasteboard.copy(kit.password, secret: true) }.controlSize(.small)
+                    }
+                }
+                LabeledContent("Recovery kit") {
+                    HStack(spacing: 8) {
+                        if let at = model.kitSavedAt {
+                            Text("Kept \(Format.ago(Int(Date().timeIntervalSince(at))))").foregroundStyle(.secondary)
+                        } else {
+                            Text("Not kept yet").foregroundStyle(Theme.warning)
+                        }
+                        Button("Show…") { showsKit = true }.controlSize(.small)
+                    }
+                }
+            } header: {
+                Text("Password")
+            } footer: {
+                Text("Nothing can open the backups without this password. MacRest keeps it on this Mac, so if the Mac is lost it goes too: keep the recovery kit somewhere else.")
             }
         }
     }

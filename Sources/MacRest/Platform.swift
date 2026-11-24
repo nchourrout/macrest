@@ -5,9 +5,11 @@ import MacRestCore
 
 /// Puts text on the clipboard.
 enum Pasteboard {
-    static func copy(_ text: String) {
+    /// `secret` marks it concealed, so clipboard history tools skip it.
+    static func copy(_ text: String, secret: Bool = false) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+        if secret { NSPasteboard.general.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")) }
     }
 }
 
@@ -80,12 +82,92 @@ enum About {
         centered.alignment = .center
         credits.addAttribute(.paragraphStyle, value: centered, range: NSRange(location: 0, length: credits.length))
         NSApp.activate()
-        // The same string for both keys shows "Version x" alone, without the
-        // build hash, which means nothing to a person.
+        // An empty build version drops the parenthesis: a local build's
+        // version already carries its commit ("0.1.1-3-g7a482ed").
         NSApp.orderFrontStandardAboutPanel(options: [
             .applicationVersion: version,
-            .version: version,
+            .version: "",
             .credits: credits,
         ])
+    }
+}
+
+/// Where Quick Look's files are restored: MacRest's own caches folder, which
+/// Backrest can write to and nothing else reads. Emptied at each launch.
+enum QuickLookCache {
+    static let root: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appending(path: Bundle.main.bundleIdentifier ?? EngineAgent.appBundleID)
+        .appending(path: "Quick Look")
+
+    static func clear() {
+        try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+}
+
+/// Prints the recovery kit: the system print panel, which also saves a PDF.
+@MainActor
+enum KitPrinter {
+    static func print(_ kit: RecoveryKit) {
+        let body = NSFont.systemFont(ofSize: 11)
+        let label = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let grey = NSColor.darkGray
+        let text = NSMutableAttributedString()
+        func add(_ s: String, _ font: NSFont, _ color: NSColor = .black) {
+            text.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: color]))
+        }
+        add(RecoveryKit.title + "\n", .systemFont(ofSize: 20, weight: .bold))
+        add(RecoveryKit.made(Date()) + "\n\n", body, grey)
+        add(RecoveryKit.warning + "\n\n", body)
+        for field in kit.fields {
+            add(field.label + "\n", label, grey)
+            add(field.value + "\n\n", mono)
+        }
+        add(RecoveryKit.stepsHeading + "\n", .systemFont(ofSize: 13, weight: .semibold))
+        for step in kit.steps { add(step + "\n", body) }
+
+        let info = NSPrintInfo.shared.copy() as! NSPrintInfo
+        info.horizontalPagination = .fit
+        info.isVerticallyCentered = false
+        info.topMargin = 54
+        info.leftMargin = 54
+        info.rightMargin = 54
+        let width = info.paperSize.width - info.leftMargin - info.rightMargin
+        let view = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 10))
+        view.textStorage?.setAttributedString(text)
+        view.isEditable = false
+        view.drawsBackground = false
+        view.sizeToFit()
+        let op = NSPrintOperation(view: view, printInfo: info)
+        op.jobTitle = RecoveryKit.title
+        op.run()
+    }
+}
+
+/// Space in a list previews, as in Finder. SwiftUI's key handlers never see
+/// it on a Table, whose table view takes it first, so this watches key
+/// presses directly, and only while a table has focus: a space typed in the
+/// search field stays a space.
+@MainActor
+final class SpaceKeyMonitor {
+    private var monitor: Any?
+
+    /// `handler` returns whether it used the key press.
+    func start(_ handler: @escaping @MainActor () -> Bool) {
+        stop()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            guard event.keyCode == 49, modifiers.isEmpty else { return event }
+            let used = MainActor.assumeIsolated {
+                NSApp.keyWindow?.firstResponder is NSTableView && handler()
+            }
+            return used ? nil : event
+        }
+    }
+
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
     }
 }

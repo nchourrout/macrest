@@ -45,11 +45,11 @@ final class AppModel {
     private(set) var actionError: String?
     private(set) var saving = false
     private(set) var loadedOnce = false
-    /// When a Backup or repo task was last sent: the poll runs fast until the
-    /// oplog shows it running, or for 20 s at most (a stats run can finish
-    /// between two polls and never be seen running).
-    private var sentAt: Date?
-    var starting: Bool { sentAt.map { Date().timeIntervalSince($0) < 20 } ?? false }
+    /// What was just sent: the poll runs fast until the oplog shows it, or
+    /// for 20 s at most, and each button waits on its own kind only.
+    private var sent = SentRequests()
+    var starting: Bool { sent.any(now: Date()) }
+    func isBusy(_ kind: BackrestOperation.Kind) -> Bool { sent.isBusy(kind, flows: flows, now: Date()) }
 
     /// Bumped to ask for the window from outside a view: `openWindow` exists
     /// only in a view's environment, so the menu bar label carries it out.
@@ -111,6 +111,7 @@ final class AppModel {
     func refreshActivity() async {
         do {
             let ops = try await BackrestClient.operations(lastN: 400)
+                .filter { !Lookups.isLookup($0, previewRoot: QuickLookCache.root.path) }
             let now = Date()
             let grouped = Activity.flows(ops, now: now)
             flows = grouped.flows
@@ -123,7 +124,7 @@ final class AppModel {
             }
             if let since = measuringSince, let at = stats?.1, at >= since { measuringSince = nil }
             overview = Overview.make(flows: flows, scheduled: scheduled, now: now, unlockedAt: unlockedAt)
-            if runningAnything { sentAt = nil }
+            sent.settle(ops, now: now)
             if loadError != nil, config != nil { loadError = nil }
         } catch {
             loadError = error.localizedDescription
@@ -225,16 +226,16 @@ final class AppModel {
 
     func backupNow() async {
         guard let id = savedPlan?.id else { return }
-        await perform { try await BackrestClient.backup(plan: id) }
+        await perform(.backup) { try await BackrestClient.backup(plan: id) }
     }
 
     func cancel(_ op: BackrestOperation) async {
-        await perform { try await BackrestClient.cancel(operation: op.id) }
+        await perform(nil) { try await BackrestClient.cancel(operation: op.id) }
     }
 
     func repoTask(_ task: BackrestClient.RepoTask) async {
         guard let repo = savedRepo?.id else { return }
-        await perform { try await BackrestClient.repoTask(task, repo: repo) }
+        await perform(task.kind) { try await BackrestClient.repoTask(task, repo: repo) }
     }
 
     func log(for op: BackrestOperation) async -> String {
@@ -289,7 +290,11 @@ final class AppModel {
 
     func dismissNotice() { notice = nil }
 
+    private(set) var unlocking = false
+
     func unlock() async {
+        unlocking = true
+        defer { unlocking = false }
         await repoTask(.unlock)
         guard actionError == nil else { return }
         unlockedAt = Date()
@@ -309,17 +314,38 @@ final class AppModel {
     /// first that can say whether it worked.
     var staleLock: StaleLock? { Activity.staleLock(in: flows, unlockedAt: unlockedAt) }
 
-    private func perform(_ work: () async throws -> Void) async {
-        sentAt = Date()
+    /// Sends a request; `kind` is the operation it starts in the oplog, if any.
+    private func perform(_ kind: BackrestOperation.Kind?, _ work: () async throws -> Void) async {
+        if let kind { sent.send(kind, at: Date()) }
         do {
             try await work()
             actionError = nil
         } catch {
             actionError = error.localizedDescription
-            sentAt = nil
+            if let kind { sent.drop(kind) }
         }
         await refreshActivity()
         wake()
+    }
+
+    // MARK: Recovery kit
+
+    var recoveryKit: RecoveryKit? {
+        guard let config, let id = savedRepo?.id else { return nil }
+        return RecoveryKit.make(config: config, repoID: id)
+    }
+
+    /// When a kit was confirmed kept, by its fingerprint: a new storage, or a
+    /// rotated key, makes a new kit to keep.
+    private(set) var kitSaved: [String: Date] =
+        (UserDefaults.standard.dictionary(forKey: "recoveryKitSaved") as? [String: Date]) ?? [:]
+
+    var kitSavedAt: Date? { recoveryKit.flatMap { kitSaved[$0.fingerprint] } }
+
+    func markKitSaved() {
+        guard let kit = recoveryKit else { return }
+        kitSaved[kit.fingerprint] = Date()
+        UserDefaults.standard.set(kitSaved, forKey: "recoveryKitSaved")
     }
 
     // MARK: Browse
@@ -376,8 +402,174 @@ final class AppModel {
         open(folder ?? snapshotRoot)
     }
 
+    /// An item to select once its folder is listed: a search result shown in
+    /// its backup. The view takes it and clears it.
+    var highlight: String?
+
+    /// Shows a found item where it lives, in the newest backup holding that
+    /// version.
+    func reveal(_ path: String, in snapshotID: String) {
+        guard let snapshot = snapshots.first(where: { $0.id == snapshotID }) else { return }
+        highlight = path
+        selectedSnapshot = snapshot
+        open((path as NSString).deletingLastPathComponent)
+    }
+
+    // MARK: Search
+
+    private(set) var searchResult: FileSearchResult?
+    private(set) var searching: String?
+    private(set) var searchError: String?
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
+
+    var searchScope: [ResticSnapshot] { FileSearch.snapshotsToSearch(snapshots, now: Date()) }
+    /// What a search covers, in words: "12 backups from the last 30 days",
+    /// or the one older backup it falls back to.
+    var searchScopeText: String? { FileSearch.scopeText(searchScope, now: Date()) }
+    /// A search is running, or its results or error are on screen.
+    var hasSearch: Bool { searching != nil || searchResult != nil || searchError != nil }
+
+    /// Finds files and folders by name in the last 30 days of backups:
+    /// restic find, run through Backrest, its output read from the log.
+    func search(_ query: String) {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, let repo = savedPlan?.repo else { return }
+        let scope = searchScope
+        guard !scope.isEmpty else { return }
+        clearSearch()
+        searching = query
+        searchError = nil
+        searchResult = nil
+        searchTask = Task {
+            do {
+                let id = try await BackrestClient.runCommand(repo: repo, command: FileSearch.command(query: query, snapshots: scope.map(\.id)))
+                guard let op = try await BackrestClient.operation(id: id), let ref = op.outputLogref else {
+                    throw BackrestClient.Failure(message: "The search finished but left no output.")
+                }
+                // A failed find (storage unreachable, a pattern restic
+                // rejects) leaves no matches: say why, not "nothing found".
+                guard op.outcome == .success || op.outcome == .warning else {
+                    throw BackrestClient.Failure(message: op.reason ?? "The search could not read the backups.")
+                }
+                let log = try await BackrestClient.log(ref: ref)
+                let times = Dictionary(scope.map { ($0.id, $0.time) }, uniquingKeysWith: { a, _ in a })
+                // Up to 2 MB of output to scan: off the main thread.
+                let result = await Task.detached { FileSearch.parse(log, snapshotTimes: times) }.value
+                guard !Task.isCancelled else { return }
+                searchResult = result
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                // A timeout here leaves restic walking the backups: stop it.
+                stopSearchRuns(before: Date())
+                searchError = error.localizedDescription
+            }
+            searching = nil
+        }
+    }
+
+    /// Backrest names a run only once it ends, so a search given up on is
+    /// found in the oplog by its command and stopped there, queued or
+    /// running: restic would otherwise keep walking every backup. Only runs
+    /// from before `before`, so a search started right after keeps going.
+    private func stopSearchRuns(before: Date) {
+        Task {
+            let runs = try? await BackrestClient.operations(lastN: 40).filter {
+                $0.kind == .command && ($0.outcome == .running || $0.outcome == .pending) && $0.start < before
+                    && $0.command?.hasPrefix(FileSearch.commandPrefix) == true
+            }
+            for op in runs ?? [] { try? await BackrestClient.cancel(operation: op.id) }
+        }
+    }
+
+    func clearSearch() {
+        searchTask?.cancel()
+        if searching != nil { stopSearchRuns(before: Date()) }
+        searching = nil
+        searchResult = nil
+        searchError = nil
+    }
+
+    // MARK: Quick Look
+
+    /// The file Quick Look shows; set once it is restored to the cache.
+    var previewURL: URL?
+    /// The file being fetched for Quick Look.
+    private(set) var previewing: SnapshotEntry?
+    @ObservationIgnored private var previews: [String: URL] = [:]
+    @ObservationIgnored private var previewTask: Task<Void, Never>?
+    /// Past this, a preview waits too long on a slow link: restore it instead.
+    static let previewLimit: Int64 = 512 * 1024 * 1024
+
+    /// Restores one file from the selected backup into MacRest's cache
+    /// through Backrest, then hands it to Quick Look. Kept out of Activity
+    /// (see `Lookups`), and cached per backup and path.
+    func preview(_ entry: SnapshotEntry) {
+        guard !entry.isDirectory, let snapshot = selectedSnapshot, let plan = savedPlan else { return }
+        if let size = entry.size, size > Self.previewLimit {
+            actionError = "\u{201C}\(entry.name)\u{201D} is \(Format.size(size)), too large to preview. Restore it instead."
+            return
+        }
+        let key = snapshot.id + "\u{0}" + entry.path
+        // A fetch still under way would otherwise replace this one when done.
+        previewTask?.cancel()
+        previewing = nil
+        if let url = previews[key], FileManager.default.fileExists(atPath: url.path) {
+            previewURL = url
+            return
+        }
+        previewing = entry
+        let target = QuickLookCache.root.appending(path: UUID().uuidString).path
+        previewTask = Task {
+            defer { if !Task.isCancelled { previewing = nil } }
+            do {
+                guard let id = try await BackrestClient.restore(repo: plan.repo, plan: plan.id, snapshot: snapshot.id,
+                                                                path: entry.path, target: target)
+                else { throw BackrestClient.Failure(message: "The backup engine did not start the preview.") }
+                // Backrest queues the restore. Behind a running backup it
+                // waits for that to end, so the wait slows down until it runs,
+                // and gives up after a minute of waiting: a backup can take hours.
+                var wait = 0.5
+                let queuedSince = Date()
+                while true {
+                    try await Task.sleep(for: .seconds(wait))
+                    let op = try await BackrestClient.operation(id: id)
+                    wait = op?.outcome == .running ? 0.5 : min(wait * 2, 4)
+                    if op?.outcome != .running, op?.outcome != .success, Date().timeIntervalSince(queuedSince) > 60 {
+                        try? await BackrestClient.cancel(operation: id)
+                        throw BackrestClient.Failure(message: "The backup engine is busy with another task, so \u{201C}\(entry.name)\u{201D} cannot be previewed yet. Try again when it finishes.")
+                    }
+                    switch op?.outcome {
+                    case .success?:
+                        let url = URL(fileURLWithPath: target).appending(path: entry.name)
+                        previews[key] = url
+                        previewURL = url
+                        return
+                    case .failed?, .cancelled?, .warning?:
+                        throw BackrestClient.Failure(message: "Could not preview \u{201C}\(entry.name)\u{201D}: \(op?.reason ?? "the restore failed").")
+                    default:
+                        continue
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                actionError = error.localizedDescription
+            }
+        }
+    }
+
+    func cancelPreview() {
+        previewTask?.cancel()
+        previewing = nil
+    }
+
     func open(_ path: String) {
         guard let snapshot = selectedSnapshot, let repo = savedPlan?.repo else { return }
+        // A found item waits for its own folder only.
+        if let h = highlight, (h as NSString).deletingLastPathComponent != path { highlight = nil }
         folder = path
         let key = snapshot.id + "\u{0}" + path
         if let cached = listings[key] {
@@ -401,6 +593,7 @@ final class AppModel {
             } catch {
                 guard !Task.isCancelled else { return }
                 entries = []
+                highlight = nil
                 // A path this snapshot does not hold: an older snapshot from
                 // before the folder existed. Say so rather than show an error.
                 folderMissing = error.localizedDescription.contains("not found") || error.localizedDescription.contains("no such")
@@ -413,7 +606,7 @@ final class AppModel {
     /// `target`. Backrest runs it as an operation, so it shows in Activity.
     func restore(_ entry: SnapshotEntry, to target: String) async {
         guard let snapshot = selectedSnapshot, let plan = savedPlan else { return }
-        await perform {
+        await perform(.restore) {
             try await BackrestClient.restore(repo: plan.repo, plan: plan.id, snapshot: snapshot.id, path: entry.path, target: target)
         }
     }
