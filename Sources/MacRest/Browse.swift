@@ -16,13 +16,17 @@ struct BrowseView: View {
     @AppStorage("showsHiddenFiles") private var showsHidden = false
     /// Typing filters the folder shown; Return searches the backups.
     @ViewState private var query = ""
+    /// A hidden item opened from search, shown in its folder without turning
+    /// on Hidden Files for good.
+    @ViewState private var revealedHidden: String?
     @ViewState private var spaceKey = SpaceKeyMonitor()
     @FocusState private var listFocused: Bool
 
     private var trimmedQuery: String { query.trimmingCharacters(in: .whitespaces) }
 
     private var shown: [SnapshotEntry] {
-        let visible = showsHidden ? model.entries : model.entries.filter { !$0.name.hasPrefix(".") }
+        let visible = showsHidden ? model.entries
+            : model.entries.filter { !$0.name.hasPrefix(".") || $0.path == revealedHidden }
         let q = trimmedQuery
         return q.isEmpty ? visible : visible.filter { $0.name.localizedCaseInsensitiveContains(q) }
     }
@@ -54,6 +58,9 @@ struct BrowseView: View {
         }
         .onChange(of: model.entries) { applyHighlight() }
         .onChange(of: model.highlight) { applyHighlight() }
+        .onChange(of: model.folder) {
+            if let h = revealedHidden, (h as NSString).deletingLastPathComponent != model.folder { revealedHidden = nil }
+        }
         .quickLookPreview($model.previewURL)
         .onAppear {
             // Space opens the preview, and closes it again, as in Finder.
@@ -189,7 +196,7 @@ struct BrowseView: View {
     /// files when it is one.
     private func applyHighlight() {
         guard let path = model.highlight, model.entries.contains(where: { $0.path == path }) else { return }
-        if (path as NSString).lastPathComponent.hasPrefix(".") { showsHidden = true }
+        if (path as NSString).lastPathComponent.hasPrefix(".") { revealedHidden = path }
         selection = [path]
         // The results list had the focus and is gone: give it to the folder,
         // so Space previews the item just found.
@@ -219,7 +226,7 @@ struct BrowseView: View {
         return HStack(spacing: 10) {
             if let searching = model.searching {
                 ProgressView().controlSize(.small)
-                Text("Searching \(Format.plural(model.searchScope.count, "backup")) for \u{201C}\(searching)\u{201D}…").foregroundStyle(.secondary)
+                Text("Searching \(model.searchScopeText ?? "the backups") for \u{201C}\(searching)\u{201D}…").foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { model.clearSearch() }
             } else if showsResults {
@@ -237,7 +244,7 @@ struct BrowseView: View {
                     ProgressView().controlSize(.small)
                     Text("Opening…").foregroundStyle(.secondary)
                 } else if !trimmedQuery.isEmpty {
-                    Text("Press Return to search \(Format.plural(model.searchScope.count, "backup")) from the last \(FileSearch.days) days.")
+                    Text(model.searchScopeText.map { "Press Return to search \($0)." } ?? "No backups to search yet.")
                         .foregroundStyle(.secondary)
                 } else if let target = lastTarget {
                     RestoreStatus(target: target, flows: model.flows)
@@ -287,13 +294,13 @@ struct SearchResults: View {
         } else if let result = model.searchResult {
             if result.items.isEmpty {
                 ContentUnavailableView("Nothing named \u{201C}\(query)\u{201D}", systemImage: "magnifyingglass",
-                                       description: Text("No file or folder with that in its name in \(Format.plural(result.snapshotCount, "backup")) from the last \(FileSearch.days) days."))
+                                       description: Text("No file or folder with that in its name in \(model.searchScopeText ?? "the backups searched")."))
             } else {
                 table(result.items)
             }
         } else {
             Loading(title: "Searching the backups…",
-                    detail: "Looking for \u{201C}\(query)\u{201D} in every backup from the last \(FileSearch.days) days. Over the network this can take a minute.")
+                    detail: "Looking for \u{201C}\(query)\u{201D} in \(model.searchScopeText ?? "the backups"). Over the network this can take a minute.")
         }
     }
 

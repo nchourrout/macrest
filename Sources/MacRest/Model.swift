@@ -423,6 +423,9 @@ final class AppModel {
     @ObservationIgnored private var searchTask: Task<Void, Never>?
 
     var searchScope: [ResticSnapshot] { FileSearch.snapshotsToSearch(snapshots, now: Date()) }
+    /// What a search covers, in words: "12 backups from the last 30 days",
+    /// or the one older backup it falls back to.
+    var searchScopeText: String? { FileSearch.scopeText(searchScope, now: Date()) }
     /// A search is running, or its results or error are on screen.
     var hasSearch: Bool { searching != nil || searchResult != nil || searchError != nil }
 
@@ -458,29 +461,31 @@ final class AppModel {
                 return
             } catch {
                 guard !Task.isCancelled else { return }
+                // A timeout here leaves restic walking the backups: stop it.
+                stopSearchRuns(before: Date())
                 searchError = error.localizedDescription
             }
             searching = nil
         }
     }
 
+    /// Backrest names a run only once it ends, so a search given up on is
+    /// found in the oplog by its command and stopped there, queued or
+    /// running: restic would otherwise keep walking every backup. Only runs
+    /// from before `before`, so a search started right after keeps going.
+    private func stopSearchRuns(before: Date) {
+        Task {
+            let runs = try? await BackrestClient.operations(lastN: 40).filter {
+                $0.kind == .command && ($0.outcome == .running || $0.outcome == .pending) && $0.start < before
+                    && $0.command?.hasPrefix(FileSearch.commandPrefix) == true
+            }
+            for op in runs ?? [] { try? await BackrestClient.cancel(operation: op.id) }
+        }
+    }
+
     func clearSearch() {
         searchTask?.cancel()
-        // Backrest names the run only once it ends, so a search given up on
-        // is found in the oplog by its command and stopped there: restic
-        // would otherwise keep walking every backup.
-        if searching != nil {
-            // Only runs started before now: a search started right after
-            // this one must keep going.
-            let before = Date()
-            Task {
-                let running = try? await BackrestClient.operations(lastN: 40).filter {
-                    $0.kind == .command && $0.outcome == .running && $0.start < before
-                        && $0.command?.hasPrefix(FileSearch.commandPrefix) == true
-                }
-                for op in running ?? [] { try? await BackrestClient.cancel(operation: op.id) }
-            }
-        }
+        if searching != nil { stopSearchRuns(before: Date()) }
         searching = nil
         searchResult = nil
         searchError = nil
@@ -523,12 +528,18 @@ final class AppModel {
                                                                 path: entry.path, target: target)
                 else { throw BackrestClient.Failure(message: "The backup engine did not start the preview.") }
                 // Backrest queues the restore. Behind a running backup it
-                // waits for that to end, so the wait slows down until it runs.
+                // waits for that to end, so the wait slows down until it runs,
+                // and gives up after a minute of waiting: a backup can take hours.
                 var wait = 0.5
+                let queuedSince = Date()
                 while true {
                     try await Task.sleep(for: .seconds(wait))
                     let op = try await BackrestClient.operation(id: id)
                     wait = op?.outcome == .running ? 0.5 : min(wait * 2, 4)
+                    if op?.outcome != .running, op?.outcome != .success, Date().timeIntervalSince(queuedSince) > 60 {
+                        try? await BackrestClient.cancel(operation: id)
+                        throw BackrestClient.Failure(message: "The backup engine is busy with another task, so \u{201C}\(entry.name)\u{201D} cannot be previewed yet. Try again when it finishes.")
+                    }
                     switch op?.outcome {
                     case .success?:
                         let url = URL(fileURLWithPath: target).appending(path: entry.name)
@@ -557,6 +568,8 @@ final class AppModel {
 
     func open(_ path: String) {
         guard let snapshot = selectedSnapshot, let repo = savedPlan?.repo else { return }
+        // A found item waits for its own folder only.
+        if let h = highlight, (h as NSString).deletingLastPathComponent != path { highlight = nil }
         folder = path
         let key = snapshot.id + "\u{0}" + path
         if let cached = listings[key] {
@@ -580,6 +593,7 @@ final class AppModel {
             } catch {
                 guard !Task.isCancelled else { return }
                 entries = []
+                highlight = nil
                 // A path this snapshot does not hold: an older snapshot from
                 // before the folder existed. Say so rather than show an error.
                 folderMissing = error.localizedDescription.contains("not found") || error.localizedDescription.contains("no such")

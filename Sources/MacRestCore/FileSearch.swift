@@ -52,10 +52,21 @@ public enum FileSearch {
     }
 
     /// A name, or part of one, as a restic pattern: matched anywhere in the
-    /// name unless it already carries wildcards.
+    /// name unless it carries `*` or `?`. Brackets are literal, since names
+    /// hold them ("Drafts [old]") far more often than people type classes.
     public static func pattern(_ query: String) -> String {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return q.contains(where: { "*?[".contains($0) }) ? q : "*\(q)*"
+            .replacingOccurrences(of: "[", with: "[[]")
+        return q.contains(where: { "*?".contains($0) }) ? q : "*\(q)*"
+    }
+
+    /// What a search covers, in words, or nil when there is nothing to search.
+    public static func scopeText(_ scope: [ResticSnapshot], now: Date) -> String? {
+        guard let newest = scope.first else { return nil }
+        if now.timeIntervalSince(newest.time) > Double(days) * 86_400 {
+            return "the last backup, from \(Format.date(newest.time, "d MMMM yyyy"))"
+        }
+        return "\(Format.plural(scope.count, "backup")) from the last \(days) days"
     }
 
     /// The `RunCommand` line. Backrest splits it like a shell would, so the

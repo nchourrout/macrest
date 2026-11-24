@@ -48,6 +48,8 @@ let times: [String: Date] = ["aa": Date(timeIntervalSince1970: 100), "bb": Date(
     @Test func commandQuotesThePattern() {
         #expect(FileSearch.pattern("  report ") == "*report*")
         #expect(FileSearch.pattern("*.pdf") == "*.pdf")
+        // Brackets are part of names, not character classes.
+        #expect(FileSearch.pattern("Drafts [old]") == "*Drafts [[]old]*")
         #expect(FileSearch.command(query: "my \"q\\", snapshots: ["aa", "bb"])
             == #"find --json --ignore-case --snapshot aa --snapshot bb "*my \"q\\*""#)
     }
@@ -62,6 +64,9 @@ let times: [String: Date] = ["aa": Date(timeIntervalSince1970: 100), "bb": Date(
         // One per day, the last of it: hourly backups would be 720 walks.
         #expect(FileSearch.snapshotsToSearch(all, now: now, calendar: utc).map(\.id) == ["new", "edge"])
         #expect(FileSearch.snapshotsToSearch([try snap("old", daysAgo: 45), try snap("older", daysAgo: 90)], now: now).map(\.id) == ["old"])
+        #expect(FileSearch.scopeText(FileSearch.snapshotsToSearch(all, now: now, calendar: utc), now: now) == "2 backups from the last 30 days")
+        #expect(FileSearch.scopeText([try snap("old", daysAgo: 45)], now: now)?.hasPrefix("the last backup, from ") == true)
+        #expect(FileSearch.scopeText([], now: now) == nil)
     }
 
     @Test func ownLookupsStayOutOfActivity() throws {
