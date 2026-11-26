@@ -13,7 +13,7 @@ Encrypted, deduplicated backups to a disk, your own server or the cloud, with a 
 ![macOS 26+](https://img.shields.io/badge/macOS-26%2B-black?logo=apple)
 ![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white)
 
-<img src="docs/screenshots/browse.png" alt="Browsing a snapshot: the home folder as it was, with every snapshot on a timeline" width="820">
+<img src="docs/screenshots/browse.png" alt="Browse: the home folder as it was, with every backup on a timeline" width="820">
 
 </div>
 
@@ -26,10 +26,12 @@ MacRest is the Mac app on top: install it, choose where the backups go, and you'
 ## Features
 
 - **One-screen setup.** Pick an external disk, an SFTP server or NAS, S3-compatible storage (AWS, Cloudflare R2, Wasabi, MinIO…), Backblaze B2, a restic REST server, or any restic repository. MacRest tests the connection, finds existing backups to continue, and generates the encryption password (also saved to your keychain).
-- **Browse and restore, Time Machine style.** Open any snapshot and move through the timeline while staying in the same folder. Restores always land in a new folder beside the original, so nothing is overwritten.
+- **Browse and restore, Time Machine style.** Open any backup and move through the timeline while staying in the same folder. Press Space to preview a file with Quick Look. Restores always land in a new folder beside the original, so nothing is overwritten.
+- **Search across backups.** Type to filter the folder, or press Return to find a file by name in the last month of backups and see every version of it.
 - **Sensible defaults.** Your home folder, minus caches, VMs, build output and app data that rebuilds itself. Hourly snapshots, kept hourly for a day, daily for a month, weekly for a year and monthly for two years.
-- **Health at a glance.** The menu bar icon and the Activity view show the last backup, the next one, two weeks of results, and maintenance (retention, prune, integrity checks) that fails quietly while backups still succeed.
-- **Stale locks handled.** A lock left behind by a crashed run blocks cleanup until someone removes it. MacRest spots it, offers Unlock, and can clear stale locks automatically.
+- **Health at a glance.** The menu bar icon and the Activity view show the last backup, the next one, and two weeks of results. A run that could not reach the storage (laptop away from the server, disk unplugged) counts as missed, not failed, and a failure a later backup made up for stops counting. Maintenance that fails quietly while backups still succeed (cleanup, space recovery, verification) raises a warning on its own.
+- **Leftover locks handled.** A lock left behind by a crashed run blocks cleanup until someone removes it. MacRest spots it, offers Unlock, and can clear leftover locks automatically.
+- **A recovery kit.** The password lives on this Mac, so losing the Mac would lose the backups. MacRest asks you to print or copy a kit with everything needed to restore from another machine, and asks again when the storage or its keys change.
 - **Storage credentials done right.** Keys go into restic's environment, never into the repository URL, and they can be rotated later without setting anything up again. For SFTP, MacRest can make a dedicated SSH key and install it with `ssh-copy-id`, so your server password is never typed into the app.
 - **Native.** SwiftUI, light and dark mode, an optional menu bar icon. No Electron, no browser tab.
 
@@ -39,9 +41,14 @@ MacRest is the Mac app on top: install it, choose where the backups go, and you'
 |---|---|
 | <img src="docs/screenshots/activity.png" alt="Activity: backup health, two weeks of results, upcoming runs and history"> | <img src="docs/screenshots/schedule.png" alt="Schedule: backup frequency and a retention timeline"> |
 
-| Setup | Menu bar |
-|---|---|
-| <img src="docs/screenshots/setup.png" alt="Setup: an external disk, a server, S3, B2, a REST server or any restic repository"> | <img src="docs/screenshots/menu-light.png" alt="Menu bar panel with status, Back Up Now and Restore" width="330"> |
+<p align="center"><strong>Setup</strong><br>
+<img src="docs/screenshots/setup.png" alt="Setup: an external disk, a server, S3, B2, a REST server or any restic repository" width="600"></p>
+
+<p align="center"><strong>Menu bar</strong><br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/menu-dark.png">
+  <img src="docs/screenshots/menu-light.png" alt="The menu bar icon open on its panel: backup status, two weeks of results, Back Up Now and Restore" width="600">
+</picture></p>
 
 ## MacRest compared with Time Machine
 
